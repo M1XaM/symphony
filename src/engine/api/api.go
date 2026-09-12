@@ -11,6 +11,7 @@ import (
 
 	"symphony/engine/core"
 	"symphony/engine/events"
+	"symphony/engine/library"
 	"symphony/engine/planner"
 	"symphony/engine/spec"
 )
@@ -19,12 +20,13 @@ import (
 type API struct {
 	eng   *core.Engine
 	bus   *events.Bus
+	lib   *library.Library
 	ctx   context.Context
 	unsub func()
 }
 
-func New(eng *core.Engine, bus *events.Bus) *API {
-	return &API{eng: eng, bus: bus}
+func New(eng *core.Engine, bus *events.Bus, lib *library.Library) *API {
+	return &API{eng: eng, bus: bus, lib: lib}
 }
 
 // Startup wires the event bus to Wails. It is a package function rather
@@ -59,6 +61,35 @@ func (a *API) GetTopology() spec.Topology {
 // GetPresets returns the seeded example topologies.
 func (a *API) GetPresets() []spec.Topology {
 	return spec.Presets()
+}
+
+// GetUserTemplates returns the templates saved on this machine. They are
+// listed alongside the built-in presets in the left panel.
+func (a *API) GetUserTemplates() ([]spec.Topology, error) {
+	return a.lib.List()
+}
+
+// SaveUserTemplate stores a template (replacing one of the same name) and
+// returns the library as it now stands on disk.
+func (a *API) SaveUserTemplate(t spec.Topology) ([]spec.Topology, error) {
+	list, err := a.lib.Save(t)
+	if err != nil {
+		return nil, err
+	}
+	a.bus.Log("info", "library", "saved template \""+t.Name+"\" to "+a.lib.Path())
+	return list, nil
+}
+
+// DeleteUserTemplate removes a saved template and returns what is left.
+func (a *API) DeleteUserTemplate(name string) ([]spec.Topology, error) {
+	return a.lib.Delete(name)
+}
+
+// GetLogHistory returns the log lines emitted before the webview attached, so
+// the Log tab starts out complete instead of beginning wherever the frontend
+// happened to subscribe.
+func (a *API) GetLogHistory() []events.LogPayload {
+	return a.bus.LogHistory()
 }
 
 // GetPhase returns the engine phase for the toolbar pill.

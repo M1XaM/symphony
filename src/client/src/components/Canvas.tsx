@@ -12,12 +12,28 @@ import {
   type NodeTypes,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { useCallback, useEffect, useMemo, type DragEvent } from 'react'
-import { useSymphonyStore } from '../store/useSymphonyStore'
+import { useCallback, useEffect, useMemo, useRef, type DragEvent } from 'react'
+import { selectStatuses, useSymphonyStore } from '../store/useSymphonyStore'
 import type { NodeKind } from '../types/topology'
 import { TopologyNodeView, type RFNode } from './nodes/TopologyNodeView'
 
 export const DRAG_MIME = 'application/symphony-node'
+
+const MIN_ZOOM = 0.3
+const MAX_ZOOM = 2
+
+/** How much of the pane each floating panel covers, measured from the live
+ *  layout so the CSS stays the single source of truth. */
+function panelInsets() {
+  const gap = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--gap')) || 10
+  const box = (sel: string) => document.querySelector(sel)?.getBoundingClientRect()
+  return {
+    left: gap * 2 + (box('.panel-left')?.width ?? 0),
+    right: gap * 2 + (box('.panel-right')?.width ?? 0),
+    top: gap * 2 + (box('.panel-top')?.height ?? 0),
+    bottom: gap * 2 + (box('.panel-bottom')?.height ?? 0),
+  }
+}
 
 const nodeTypes: NodeTypes = {
   service: TopologyNodeView,
@@ -29,7 +45,7 @@ const nodeTypes: NodeTypes = {
 
 export function Canvas() {
   const topology = useSymphonyStore((s) => s.topology)
-  const statuses = useSymphonyStore((s) => s.statuses)
+  const statuses = useSymphonyStore(selectStatuses)
   const selectedNodeId = useSymphonyStore((s) => s.selectedNodeId)
   const loadSeq = useSymphonyStore((s) => s.loadSeq)
   const moveNode = useSymphonyStore((s) => s.moveNode)
@@ -38,7 +54,8 @@ export function Canvas() {
   const addEdge = useSymphonyStore((s) => s.addEdge)
   const addNode = useSymphonyStore((s) => s.addNode)
   const select = useSymphonyStore((s) => s.select)
-  const { screenToFlowPosition, fitView } = useReactFlow()
+  const { screenToFlowPosition, fitView, setViewport } = useReactFlow()
+  const paneRef = useRef<HTMLDivElement>(null)
 
   const nodes = useMemo<RFNode[]>(
     () =>
@@ -70,10 +87,45 @@ export function Canvas() {
     [topology.edges],
   )
 
+  /** Fit the graph into the band the floating panels leave clear. Used on load
+   *  and by the controls' fit button, which would otherwise centre on the whole
+   *  pane and tuck half the graph under a panel. */
+  const fitToClearArea = useCallback(() => {
+    const pane = paneRef.current
+    if (!pane) return
+    // Never let the insets eat the whole viewport on a small window.
+    const inset = panelInsets()
+    const maxX = pane.clientWidth * 0.4
+    const maxY = pane.clientHeight * 0.4
+    const pad = {
+      left: Math.min(inset.left + 16, maxX),
+      right: Math.min(inset.right + 16, maxX),
+      top: Math.min(inset.top + 16, maxY),
+      bottom: Math.min(inset.bottom + 16, maxY),
+    }
+
+    if (useSymphonyStore.getState().topology.nodes.length === 0) {
+      // Nothing to fit (a fresh template): park the origin in the clear area so
+      // dropped nodes land in view with sane coordinates.
+      setViewport({ x: pad.left + 32, y: pad.top + 32, zoom: 1 })
+      return
+    }
+
+    fitView({
+      padding: {
+        left: `${pad.left}px`,
+        right: `${pad.right}px`,
+        top: `${pad.top}px`,
+        bottom: `${pad.bottom}px`,
+      },
+      duration: 0,
+    })
+  }, [fitView, setViewport])
+
   useEffect(() => {
-    const id = window.setTimeout(() => fitView({ padding: 0.15, duration: 0 }), 30)
+    const id = window.setTimeout(fitToClearArea, 30)
     return () => window.clearTimeout(id)
-  }, [loadSeq, fitView])
+  }, [loadSeq, fitToClearArea])
 
   const onNodesChange = useCallback(
     (changes: NodeChange<RFNode>[]) => {
@@ -130,7 +182,7 @@ export function Canvas() {
   )
 
   return (
-    <div className="canvas" onDragOver={onDragOver} onDrop={onDrop}>
+    <div className="canvas" ref={paneRef} onDragOver={onDragOver} onDrop={onDrop}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -141,13 +193,13 @@ export function Canvas() {
         onPaneClick={() => select(null)}
         deleteKeyCode={['Backspace', 'Delete']}
         colorMode="dark"
-        minZoom={0.3}
-        maxZoom={2}
+        minZoom={MIN_ZOOM}
+        maxZoom={MAX_ZOOM}
         proOptions={{ hideAttribution: true }}
         defaultEdgeOptions={{ type: 'smoothstep' }}
       >
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
-        <Controls showInteractive={false} position="bottom-right" />
+        <Controls showInteractive={false} position="top-left" onFitView={fitToClearArea} />
       </ReactFlow>
     </div>
   )

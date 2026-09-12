@@ -1,5 +1,5 @@
 import { KIND_LABEL } from '../lib/format'
-import { selectSelectedNode, useSymphonyStore } from '../store/useSymphonyStore'
+import { selectSelectedNode, selectStatuses, useSymphonyStore } from '../store/useSymphonyStore'
 import type { FaultSpec, TopologyNode } from '../types/topology'
 import { ConfigField } from './HotField'
 import { LatencyChart } from './LatencyChart'
@@ -14,7 +14,7 @@ const FAULTS: { label: string; fault: FaultSpec }[] = [
 ]
 
 function NodeInspector({ node }: { node: TopologyNode }) {
-  const status = useSymphonyStore((s) => s.statuses[node.id])
+  const status = useSymphonyStore((s) => selectStatuses(s)[node.id])
   const updateNode = useSymphonyStore((s) => s.updateNode)
   const setHotConfig = useSymphonyStore((s) => s.setHotConfig)
   const setColdConfig = useSymphonyStore((s) => s.setColdConfig)

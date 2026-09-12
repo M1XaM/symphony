@@ -1,3 +1,26 @@
+export namespace events {
+	
+	export class LogPayload {
+	    level: string;
+	    source: string;
+	    message: string;
+	    ts: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new LogPayload(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.level = source["level"];
+	        this.source = source["source"];
+	        this.message = source["message"];
+	        this.ts = source["ts"];
+	    }
+	}
+
+}
+
 export namespace planner {
 	
 	export class Operation {

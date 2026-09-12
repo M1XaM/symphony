@@ -84,15 +84,20 @@ type FaultPayload struct {
 	Active     bool   `json:"active"`
 }
 
+// logHistoryCap bounds the replay buffer. The frontend keeps its own cap; this
+// only has to cover the window between process start and the webview attaching.
+const logHistoryCap = 500
+
 // Handler receives events. Handlers are invoked synchronously on the
 // publisher's goroutine; keep them fast (the Wails forwarder only serialises).
 type Handler func(Event)
 
 // Bus fans events out to subscribers. Safe for concurrent use.
 type Bus struct {
-	mu   sync.RWMutex
-	next int
-	subs map[int]Handler
+	mu      sync.RWMutex
+	next    int
+	subs    map[int]Handler
+	history []LogPayload
 }
 
 func NewBus() *Bus {
@@ -127,7 +132,23 @@ func (b *Bus) Publish(t Type, payload any) {
 	}
 }
 
-// Log is a convenience for publishing an EngineLog event.
+// Log is a convenience for publishing an EngineLog event. Lines are also kept
+// in a bounded history: most of the interesting startup logging happens before
+// the webview exists, and it would otherwise be lost.
 func (b *Bus) Log(level, source, msg string) {
-	b.Publish(EngineLog, LogPayload{Level: level, Source: source, Message: msg, Ts: time.Now().UnixMilli()})
+	line := LogPayload{Level: level, Source: source, Message: msg, Ts: time.Now().UnixMilli()}
+	b.mu.Lock()
+	if len(b.history) >= logHistoryCap {
+		b.history = append(b.history[:0], b.history[len(b.history)-logHistoryCap+1:]...)
+	}
+	b.history = append(b.history, line)
+	b.mu.Unlock()
+	b.Publish(EngineLog, line)
+}
+
+// LogHistory returns the buffered log lines, oldest first.
+func (b *Bus) LogHistory() []LogPayload {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return append(make([]LogPayload, 0, len(b.history)), b.history...)
 }

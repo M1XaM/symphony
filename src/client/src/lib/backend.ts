@@ -6,6 +6,7 @@ import {
   toWireFault,
   toWireTopology,
   type FaultSpec,
+  type LogEvent,
   type NodeStatus,
   type Phase,
   type Plan,
@@ -32,8 +33,26 @@ export const backend = {
   async getPresets(): Promise<Topology[]> {
     return (await API.GetPresets()).map(fromWireTopology)
   },
+  async getUserTemplates(): Promise<Topology[]> {
+    return (await API.GetUserTemplates()).map(fromWireTopology)
+  },
+  async saveUserTemplate(t: Topology): Promise<Topology[]> {
+    return (await API.SaveUserTemplate(toWireTopology(t))).map(fromWireTopology)
+  },
+  async deleteUserTemplate(name: string): Promise<Topology[]> {
+    return (await API.DeleteUserTemplate(name)).map(fromWireTopology)
+  },
   getPhase(): Promise<Phase> {
     return API.GetPhase() as Promise<Phase>
+  },
+  async getLogHistory(): Promise<LogEvent[]> {
+    const lines = await API.GetLogHistory()
+    return lines.map((l) => ({
+      level: l.level as LogEvent['level'],
+      source: l.source,
+      message: l.message,
+      ts: l.ts,
+    }))
   },
   validate(t: Topology): Promise<ValidationError[]> {
     return API.ValidateTopology(toWireTopology(t))

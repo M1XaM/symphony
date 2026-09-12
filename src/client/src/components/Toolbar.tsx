@@ -1,4 +1,4 @@
-import { useSymphonyStore } from '../store/useSymphonyStore'
+import { selectPhase, useSymphonyStore } from '../store/useSymphonyStore'
 
 const PHASE_LABEL: Record<string, string> = {
   idle: 'idle',
@@ -13,7 +13,7 @@ const PHASE_LABEL: Record<string, string> = {
 export function Toolbar() {
   const name = useSymphonyStore((s) => s.topology.name)
   const setName = useSymphonyStore((s) => s.setName)
-  const phase = useSymphonyStore((s) => s.phase)
+  const phase = useSymphonyStore(selectPhase)
   const busy = useSymphonyStore((s) => s.busy)
   const validation = useSymphonyStore((s) => s.validation)
   const validate = useSymphonyStore((s) => s.validate)

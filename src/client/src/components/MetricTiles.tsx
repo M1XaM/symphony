@@ -1,10 +1,10 @@
 import { fmtNum } from '../lib/format'
-import { useSymphonyStore } from '../store/useSymphonyStore'
+import { selectPhase, selectStatuses, useSymphonyStore } from '../store/useSymphonyStore'
 
 export function MetricTiles() {
   const m = useSymphonyStore((s) => s.metrics)
-  const statuses = useSymphonyStore((s) => s.statuses)
-  const phase = useSymphonyStore((s) => s.phase)
+  const statuses = useSymphonyStore(selectStatuses)
+  const phase = useSymphonyStore(selectPhase)
 
   const total = Object.keys(statuses).length
   const healthy = Object.values(statuses).filter((s) => s.state === 'healthy').length

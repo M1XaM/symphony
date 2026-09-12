@@ -23,6 +23,15 @@
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
   --radius: 3px;
+  /* floating chrome: panels hover over the map, they never touch the frame */
+  --radius-lg: 8px;
+  --gap: 10px;
+  --panel-left-w: 232px;
+  --panel-right-w: 300px;
+  --toolbar-h: 38px;
+  --drawer-h: 230px;
+  --panel-bg: rgba(23, 24, 28, 0.93);
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
 * {
@@ -67,32 +76,77 @@ button {
 /* --- layout --------------------------------------------------------------- */
 
 .app {
-  display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 300px;
+  position: relative;
   height: 100vh;
-}
-
-.pane {
-  background: var(--bg-1);
-  min-height: 0;
   overflow: hidden;
 }
 
-.pane-left {
-  border-right: 1px solid var(--line);
-  overflow-y: auto;
+/* the map fills the window */
+.map-layer {
+  position: absolute;
+  inset: 0;
 }
 
-.pane-right {
-  border-left: 1px solid var(--line);
-  display: flex;
-  flex-direction: column;
+/* ...and every panel floats above it, inset from the window edge. The layer
+   itself is click-through so the gaps between panels stay part of the map. */
+.chrome {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: var(--panel-left-w) minmax(0, 1fr) var(--panel-right-w);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--gap);
+  padding: var(--gap);
+  pointer-events: none;
 }
 
-.pane-center {
+.panel {
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel-bg);
+  box-shadow: var(--shadow);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  pointer-events: auto;
+}
+
+.panel-top {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+.panel-left {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.panel-right {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+.panel-bottom {
+  grid-column: 2;
+  grid-row: 3;
+  align-self: end;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
 }
 
 .pane-title {
@@ -116,6 +170,13 @@ button {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--fg-muted);
+}
+
+.panel-head-note {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--fg-dim);
 }
 
 /* --- controls ------------------------------------------------------------- */
@@ -322,13 +383,116 @@ input[type='checkbox'] {
   color: var(--fg-muted);
 }
 
+/* --- left panel: elements / templates slider ------------------------------ */
+
+.left-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.left-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* "add template" is pinned under both tabs, always the last element */
+.left-foot {
+  flex-shrink: 0;
+  padding: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.left-foot-split {
+  display: flex;
+  gap: 6px;
+}
+
+.left-foot-split .btn {
+  flex: 1;
+  justify-content: center;
+}
+
+.btn-add {
+  width: 100%;
+  justify-content: center;
+  padding: 7px 8px;
+  border-style: dashed;
+  background: transparent;
+  color: var(--fg-muted);
+}
+
+.btn-add:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  color: var(--fg);
+}
+
+.btn-plus {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.seg-wrap {
+  flex-shrink: 0;
+  padding: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.seg {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg-2);
+}
+
+.seg-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(50% - 2px);
+  height: calc(100% - 4px);
+  border-radius: 4px;
+  background: var(--bg-3);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  transition: transform 180ms cubic-bezier(0.3, 0.7, 0.2, 1);
+}
+
+.seg-templates .seg-thumb {
+  transform: translateX(100%);
+}
+
+.seg-btn {
+  position: relative;
+  z-index: 1;
+  padding: 4px 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+
+.seg-btn.is-active {
+  color: var(--fg);
+}
+
 /* --- palette -------------------------------------------------------------- */
 
 .palette-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 0 8px;
+  padding: 8px;
 }
 
 .palette-item {
@@ -382,45 +546,147 @@ input[type='checkbox'] {
 }
 
 .palette-help {
-  padding: 6px 10px 10px;
+  padding: 2px 10px 10px;
   font-size: 11px;
   color: var(--fg-dim);
 }
 
-.preset-list {
+/* --- templates ------------------------------------------------------------ */
+
+.template-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 0 8px 12px;
+  padding: 8px;
 }
 
-.preset-item {
+.template-row {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+
+.template-row:hover {
+  border-color: var(--line-strong);
+}
+
+.template-row.is-active {
+  border-color: var(--accent);
+}
+
+.template-item {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--bg-2);
+  border: none;
+  background: transparent;
   text-align: left;
   cursor: pointer;
 }
 
-.preset-item:hover {
-  border-color: var(--line-strong);
+.template-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
 }
 
-.preset-item.is-active {
-  border-color: var(--accent);
-}
-
-.preset-name {
+.template-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-weight: 600;
 }
 
-.preset-meta {
+/* the template the engine is actually running, whatever the canvas shows */
+.live-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--grey);
+}
+
+.live-dot-running {
+  background: var(--ok);
+  animation: live-pulse-ok 1.8s ease-out infinite;
+}
+
+.live-dot-validating,
+.live-dot-planning,
+.live-dot-applying,
+.live-dot-tearing_down {
+  background: var(--warn);
+  animation: live-pulse-warn 1.8s ease-out infinite;
+}
+
+.live-dot-failed {
+  background: var(--err);
+}
+
+@keyframes live-pulse-ok {
+  0% {
+    box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.6);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(63, 185, 80, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(63, 185, 80, 0);
+  }
+}
+
+@keyframes live-pulse-warn {
+  0% {
+    box-shadow: 0 0 0 0 rgba(210, 153, 34, 0.6);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(210, 153, 34, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(210, 153, 34, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot {
+    animation: none;
+  }
+}
+
+.template-meta {
   font-size: 11px;
   color: var(--fg-muted);
+}
+
+.template-del {
+  flex-shrink: 0;
+  width: 22px;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.template-row:hover .template-del,
+.template-del:focus-visible {
+  opacity: 1;
+}
+
+.template-del:hover {
+  color: var(--err);
 }
 
 /* --- toolbar -------------------------------------------------------------- */
@@ -429,9 +695,9 @@ input[type='checkbox'] {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--line);
-  background: var(--bg-1);
+  height: var(--toolbar-h);
+  padding: 0 8px;
+  background: transparent;
 }
 
 .toolbar-name {
@@ -457,12 +723,6 @@ input[type='checkbox'] {
 
 /* --- canvas --------------------------------------------------------------- */
 
-.canvas-wrap {
-  flex: 1;
-  min-height: 0;
-  position: relative;
-}
-
 .canvas {
   position: absolute;
   inset: 0;
@@ -484,6 +744,16 @@ input[type='checkbox'] {
   --xy-handle-border-color: var(--bg-1);
   --xy-node-boxshadow-selected: none;
   --xy-node-boxshadow-hover: none;
+}
+
+/* the zoom controls live in the corner the panels leave free */
+.react-flow .react-flow__controls {
+  margin: calc(var(--gap) * 2 + var(--toolbar-h) + 2px) 0 0 calc(var(--gap) * 2 + var(--panel-left-w));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--panel-bg);
+  box-shadow: var(--shadow);
 }
 
 .react-flow__edge-text {
@@ -590,14 +860,13 @@ input[type='checkbox'] {
 /* --- drawer --------------------------------------------------------------- */
 
 .drawer {
-  border-top: 1px solid var(--line);
-  background: var(--bg-1);
   display: flex;
   flex-direction: column;
+  background: transparent;
 }
 
 .drawer.is-open {
-  height: 230px;
+  height: var(--drawer-h);
 }
 
 .drawer-bar {
@@ -637,6 +906,14 @@ input[type='checkbox'] {
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+
+.drawer-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--fg-dim);
 }
 
 /* plan */
