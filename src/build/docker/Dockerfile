@@ -5,9 +5,9 @@
 #
 # Built by `make image`; used by `make build`. The source tree is bind-mounted
 # at /work by the Makefile, nothing is copied in at image build time.
-FROM golang:1.25-bookworm
+FROM golang:1.27-bookworm
 
-ARG WAILS_VERSION=v2.15.0
+ARG WAILS_VERSION=v2.16.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential pkg-config ca-certificates \
@@ -15,8 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Node + npm, lifted from the official image instead of a curl|bash installer.
-COPY --from=node:22-bookworm-slim /usr/local/bin/node /usr/local/bin/node
-COPY --from=node:22-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=node:24-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:24-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
  && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 

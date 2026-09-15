@@ -13,14 +13,26 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useCallback, useEffect, useMemo, useRef, type DragEvent } from 'react'
-import { selectStatuses, useSymphonyStore } from '../store/useSymphonyStore'
-import type { NodeKind } from '../types/topology'
+import { selectIsApplied, selectLinks, selectStatuses, useSymphonyStore } from '../store/useSymphonyStore'
+import type { LinkLevel, NodeKind } from '../types/topology'
 import { TopologyNodeView, type RFNode } from './nodes/TopologyNodeView'
 
 export const DRAG_MIME = 'application/symphony-node'
 
 const MIN_ZOOM = 0.3
 const MAX_ZOOM = 2
+
+/** Edge colour by link health. Not applied: grey. Applied: green while the
+ *  link loses fewer requests than the warn threshold, yellow above it, red
+ *  above the critical one (thresholds live in engine/metrics). The arrow
+ *  head takes the same colour; the stroke itself comes from CSS. */
+type EdgeLevel = LinkLevel | 'idle'
+const MARKER_COLOR: Record<EdgeLevel, string> = {
+  idle: '#4a4f5a',
+  ok: '#3fb950',
+  warn: '#d29922',
+  crit: '#f85149',
+}
 
 /** How much of the pane each floating panel covers, measured from the live
  *  layout so the CSS stays the single source of truth. */
@@ -46,6 +58,8 @@ const nodeTypes: NodeTypes = {
 export function Canvas() {
   const topology = useSymphonyStore((s) => s.topology)
   const statuses = useSymphonyStore(selectStatuses)
+  const links = useSymphonyStore(selectLinks)
+  const applied = useSymphonyStore(selectIsApplied)
   const selectedNodeId = useSymphonyStore((s) => s.selectedNodeId)
   const loadSeq = useSymphonyStore((s) => s.loadSeq)
   const moveNode = useSymphonyStore((s) => s.moveNode)
@@ -72,19 +86,25 @@ export function Canvas() {
   const edges = useMemo<Edge[]>(
     () =>
       topology.edges.map((e) => {
-        const label = e.via ? `${e.topic ?? e.kind} via ${e.via}` : e.topic
+        const health = applied ? links[e.id] : undefined
+        const level: EdgeLevel = health?.level ?? 'idle'
+        let label = e.via ? `${e.topic ?? e.kind} via ${e.via}` : e.topic
+        if (health && level !== 'ok') {
+          const err = `${Math.round(health.error_rate * 100)}% lost`
+          label = label ? `${label} · ${err}` : err
+        }
         return {
           id: e.id,
           source: e.from,
           target: e.to,
           type: 'smoothstep',
           label,
-          className: `tedge tedge-${e.kind}${e.via ? ' tedge-via' : ''}`,
-          markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16 },
-          data: { kind: e.kind, via: e.via },
+          className: `tedge tedge-${e.kind} tedge-${level}${e.via ? ' tedge-via' : ''}`,
+          markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: MARKER_COLOR[level] },
+          data: { kind: e.kind, via: e.via, level },
         }
       }),
-    [topology.edges],
+    [topology.edges, links, applied],
   )
 
   /** Fit the graph into the band the floating panels leave clear. Used on load

@@ -19,3 +19,17 @@ export const KIND_LABEL: Record<string, string> = {
   proxy: 'Proxy',
   infra: 'Gateway',
 }
+
+const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB']
+
+/** 1536 -> "1.5 KB". Whole bytes stay integers. */
+export function fmtBytes(n: number): string {
+  if (!Number.isFinite(n) || n < 0) return '—'
+  let v = n
+  let i = 0
+  while (v >= 1024 && i < BYTE_UNITS.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${i === 0 ? Math.round(v) : v.toFixed(1)} ${BYTE_UNITS[i]}`
+}

@@ -125,7 +125,8 @@ func (t Topology) NodeByID(id string) (Node, bool) {
 }
 
 // Topics returns the set of topics declared on messaging edges, keyed by the
-// broker node id they belong to.
+// broker node id they belong to. A messaging edge may touch a proxy instead of
+// the broker itself; the proxy is followed to the broker behind it.
 func (t Topology) Topics() map[string][]string {
 	out := map[string][]string{}
 	seen := map[string]bool{}
@@ -133,9 +134,9 @@ func (t Topology) Topics() map[string][]string {
 		if !e.Kind.Messaging() || e.Topic == "" {
 			continue
 		}
-		broker := e.To
-		if e.Kind == EdgeSubscribes {
-			broker = e.From
+		broker, ok := t.BrokerBehind(e)
+		if !ok {
+			continue
 		}
 		key := broker + "/" + e.Topic
 		if seen[key] {
@@ -145,6 +146,89 @@ func (t Topology) Topics() map[string][]string {
 		out[broker] = append(out[broker], e.Topic)
 	}
 	return out
+}
+
+// BrokerBehind returns the broker a messaging edge ultimately talks to. The
+// broker end of the edge (`to` for publishes, `from` for subscribes) is either
+// the broker itself or a proxy; a proxy is followed along its own messaging
+// edge of the same kind and topic, so traffic can be routed through any number
+// of proxies. ok is false for non-messaging edges and for chains that never
+// reach a broker.
+func (t Topology) BrokerBehind(e Edge) (string, bool) {
+	if !e.Kind.Messaging() {
+		return "", false
+	}
+	visited := map[string]bool{}
+	for {
+		id := e.To
+		if e.Kind == EdgeSubscribes {
+			id = e.From
+		}
+		node, ok := t.NodeByID(id)
+		if !ok || visited[id] {
+			return "", false
+		}
+		visited[id] = true
+		switch node.Kind {
+		case KindBroker:
+			return id, true
+		case KindProxy:
+			next, found := t.proxyUpstream(id, e.Kind, e.Topic)
+			if !found {
+				return "", false
+			}
+			e = next
+		default:
+			return "", false
+		}
+	}
+}
+
+// proxyUpstream finds the edge that feeds a proxy for the given kind and
+// topic: for publishes the edge leaving the proxy, for subscribes the edge
+// entering it.
+func (t Topology) proxyUpstream(proxy string, kind EdgeKind, topic string) (Edge, bool) {
+	for _, e := range t.Edges {
+		if e.Kind != kind || e.Topic != topic {
+			continue
+		}
+		if kind == EdgePublishes && e.From == proxy {
+			return e, true
+		}
+		if kind == EdgeSubscribes && e.To == proxy {
+			return e, true
+		}
+	}
+	return Edge{}, false
+}
+
+// Slug turns a topology name into an identifier safe for container and
+// network names: lower-case ASCII letters, digits and single dashes.
+func Slug(name string) string {
+	var b []byte
+	dash := true // suppress a leading dash
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b = append(b, byte(r))
+			dash = false
+		case r >= 'A' && r <= 'Z':
+			b = append(b, byte(r-'A'+'a'))
+			dash = false
+		default:
+			if !dash {
+				b = append(b, '-')
+				dash = true
+			}
+		}
+	}
+	for len(b) > 0 && b[len(b)-1] == '-' {
+		b = b[:len(b)-1]
+	}
+	if len(b) == 0 {
+		return "topology"
+	}
+	return string(b)
 }
 
 // Clone returns a deep copy (config maps are copied one level deep, which is

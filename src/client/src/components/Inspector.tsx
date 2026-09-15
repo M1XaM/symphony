@@ -2,7 +2,6 @@ import { KIND_LABEL } from '../lib/format'
 import { selectSelectedNode, selectStatuses, useSymphonyStore } from '../store/useSymphonyStore'
 import type { FaultSpec, TopologyNode } from '../types/topology'
 import { ConfigField } from './HotField'
-import { LatencyChart } from './LatencyChart'
 import { MetricTiles } from './MetricTiles'
 import { StatusDot } from './StatusDot'
 
@@ -104,9 +103,6 @@ export function Inspector() {
   return (
     <div className="inspector">
       <div className="inspector-main">{node ? <NodeInspector node={node} /> : <MetricTiles />}</div>
-      <div className="inspector-chart">
-        <LatencyChart />
-      </div>
     </div>
   )
 }

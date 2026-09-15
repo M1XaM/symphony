@@ -1,6 +1,8 @@
-// Package engine drives a topology from desired state to running state:
+// Package core drives topologies from desired state to running state:
 // validate -> diff -> plan -> execute against a Runtime, emitting progress
-// on the event bus. It also owns per-node status and the hot-config /
+// on the event bus. Several topologies can be applied at once; each one is a
+// deployment with its own network, containers, statuses and faults, keyed by
+// the topology's name. The engine also owns the hot-config and
 // fault-injection entry points used by the UI.
 package core
 
@@ -19,7 +21,7 @@ import (
 	"symphony/engine/spec"
 )
 
-// Phase is the engine's coarse state, shown in the toolbar pill.
+// Phase is a deployment's coarse state, shown in the toolbar pill.
 type Phase string
 
 const (
@@ -30,6 +32,8 @@ const (
 	PhaseRunning     Phase = "running"
 	PhaseTearingDown Phase = "tearing_down"
 	PhaseFailed      Phase = "failed"
+	// PhaseGone is only ever emitted: the deployment was torn down.
+	PhaseGone Phase = "gone"
 )
 
 // NodeStatus is the aggregated runtime state of one topology node across
@@ -43,8 +47,18 @@ type NodeStatus struct {
 	UpdatedAt int64  `json:"updated_at"`
 }
 
+// DeploymentInfo is the read-side snapshot of one applied topology.
+type DeploymentInfo struct {
+	Name     string                `json:"name"`
+	Phase    Phase                 `json:"phase"`
+	Network  string                `json:"network"`
+	Topology spec.Topology         `json:"topology"`
+	Statuses map[string]NodeStatus `json:"statuses"`
+}
+
 var (
-	ErrBusy           = errors.New("engine: an apply is already in progress")
+	ErrBusy           = errors.New("engine: an apply is already in progress for this topology")
+	ErrNotDeployed    = errors.New("engine: topology is not applied")
 	ErrNodeNotRunning = errors.New("engine: node is not running; apply the topology first")
 	ErrUnknownHotKey  = errors.New("engine: unknown hot config key")
 	ErrValidation     = errors.New("engine: topology failed validation")
@@ -55,30 +69,43 @@ const (
 	healthyPoll    = 60 * time.Millisecond
 )
 
+// deployment is everything the engine tracks for one applied topology.
+// Container names are prefixed with the slug so two deployments that share
+// node ids (every preset has a "gateway") never collide in the runtime.
+type deployment struct {
+	name     string
+	slug     string
+	network  string
+	phase    Phase
+	current  spec.Topology
+	statuses map[string]*NodeStatus
+	faults   map[string][]spec.FaultSpec
+	applying bool
+}
+
+// containerRef says which deployment and node a runtime container belongs to.
+type containerRef struct {
+	dep  string
+	node string
+}
+
 // Engine is safe for concurrent use; Wails invokes bound methods from
-// multiple goroutines.
+// multiple goroutines, and different deployments may apply at the same time.
 type Engine struct {
 	rt  runtime.Runtime
 	bus *events.Bus
 
 	mu         sync.Mutex
-	phase      Phase
-	current    spec.Topology
-	statuses   map[string]*NodeStatus
-	containers map[string]string // container name -> node id
-	faults     map[string][]spec.FaultSpec
-	applying   bool
+	deps       map[string]*deployment
+	containers map[string]containerRef // container name -> owner
 }
 
 func New(rt runtime.Runtime, bus *events.Bus) *Engine {
 	e := &Engine{
 		rt:         rt,
 		bus:        bus,
-		phase:      PhaseIdle,
-		current:    spec.Topology{Version: spec.CurrentVersion, Name: "empty"}.Normalized(),
-		statuses:   map[string]*NodeStatus{},
-		containers: map[string]string{},
-		faults:     map[string][]spec.FaultSpec{},
+		deps:       map[string]*deployment{},
+		containers: map[string]containerRef{},
 	}
 	if l, ok := rt.(runtime.StateListener); ok {
 		l.OnStateChange(e.onContainerState)
@@ -88,30 +115,39 @@ func New(rt runtime.Runtime, bus *events.Bus) *Engine {
 
 // --- read side ------------------------------------------------------------
 
-func (e *Engine) Current() spec.Topology {
+// Deployments lists every applied topology, sorted by name.
+func (e *Engine) Deployments() []DeploymentInfo {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.current.Clone()
-}
-
-func (e *Engine) Phase() Phase {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	return e.phase
-}
-
-func (e *Engine) NodeStatuses() map[string]NodeStatus {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	out := make(map[string]NodeStatus, len(e.statuses))
-	for k, v := range e.statuses {
-		out[k] = *v
+	out := make([]DeploymentInfo, 0, len(e.deps))
+	for _, d := range e.deps {
+		out = append(out, e.infoLocked(d))
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
+// Current returns the applied topology of one deployment.
+func (e *Engine) Current(name string) (spec.Topology, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	d := e.deps[name]
+	if d == nil {
+		return spec.Topology{}, false
+	}
+	return d.current.Clone(), true
+}
+
+func (e *Engine) infoLocked(d *deployment) DeploymentInfo {
+	st := make(map[string]NodeStatus, len(d.statuses))
+	for k, v := range d.statuses {
+		st[k] = *v
+	}
+	return DeploymentInfo{Name: d.name, Phase: d.phase, Network: d.network, Topology: d.current.Clone(), Statuses: st}
+}
+
 // MetricInputs feeds the mock metrics ticker so its numbers react to what
-// the engine is doing.
+// the engine is doing, summed over every deployment.
 type MetricInputs struct {
 	Running      bool
 	Total        int
@@ -122,42 +158,87 @@ type MetricInputs struct {
 func (e *Engine) MetricInputs() MetricInputs {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	in := MetricInputs{Running: e.phase == PhaseRunning || e.phase == PhaseApplying}
-	for _, s := range e.statuses {
-		in.Total++
-		if s.State == string(runtime.StateHealthy) {
-			in.Healthy++
+	var in MetricInputs
+	for _, d := range e.deps {
+		if d.phase == PhaseRunning || d.phase == PhaseApplying {
+			in.Running = true
 		}
-	}
-	for _, fs := range e.faults {
-		in.ActiveFaults += len(fs)
+		for _, s := range d.statuses {
+			in.Total++
+			if s.State == string(runtime.StateHealthy) {
+				in.Healthy++
+			}
+		}
+		for _, fs := range d.faults {
+			in.ActiveFaults += len(fs)
+		}
 	}
 	return in
 }
 
+// LinkInput is what the metrics ticker needs to judge one edge of a
+// deployment: the runtime state of the nodes at both ends and the faults
+// currently active on them.
+type LinkInput struct {
+	Deployment string
+	EdgeID     string
+	States     []string // node states of from, to and (if set) via
+	Faults     []spec.FaultSpec
+}
+
+// LinkInputs returns one entry per edge of every deployment that is applying
+// or running.
+func (e *Engine) LinkInputs() []LinkInput {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []LinkInput
+	for _, d := range e.deps {
+		if d.phase != PhaseRunning && d.phase != PhaseApplying {
+			continue
+		}
+		for _, edge := range d.current.Edges {
+			in := LinkInput{Deployment: d.name, EdgeID: edge.ID}
+			for _, id := range []string{edge.From, edge.To, edge.Via} {
+				if id == "" {
+					continue
+				}
+				state := string(runtime.StatePending)
+				if st := d.statuses[id]; st != nil {
+					state = st.State
+				}
+				in.States = append(in.States, state)
+				in.Faults = append(in.Faults, d.faults[id]...)
+			}
+			out = append(out, in)
+		}
+	}
+	return out
+}
+
 // --- plan / apply ---------------------------------------------------------
 
-// Plan validates and diffs without executing. Validation findings are
-// returned alongside the plan; the plan is empty when there are errors.
+// Plan validates and diffs against what is running under the topology's
+// name, without executing. Validation findings are returned alongside the
+// plan; the plan is empty when there are errors.
 func (e *Engine) Plan(desired spec.Topology) (planner.Plan, []spec.ValidationError) {
 	desired = desired.Normalized()
 	findings := desired.Validate()
 	if spec.HasErrors(findings) {
 		return planner.Plan{Ops: []planner.Operation{}}, findings
 	}
-	return planner.Diff(e.Current(), desired), findings
+	current, _ := e.Current(desired.Name)
+	if current.Name == "" {
+		current = spec.Topology{Version: desired.Version, Name: desired.Name}.Normalized()
+	}
+	return planner.Diff(current, desired), findings
 }
 
-// Apply runs the full pipeline. It blocks until the plan has executed and
-// streams apply:progress / node:status / engine:log events meanwhile.
+// Apply runs the full pipeline for the deployment named after the topology,
+// creating it on first apply and diffing against it afterwards. It blocks
+// until the plan has executed and streams apply:progress / node:status /
+// engine:log events meanwhile. Other deployments are untouched.
 func (e *Engine) Apply(ctx context.Context, desired spec.Topology) error {
-	if err := e.begin(); err != nil {
-		return err
-	}
-	defer e.end()
-
 	desired = desired.Normalized()
-	e.setPhase(PhaseValidating, "")
 	findings := desired.Validate()
 	if spec.HasErrors(findings) {
 		msgs := []string{}
@@ -166,79 +247,93 @@ func (e *Engine) Apply(ctx context.Context, desired spec.Topology) error {
 				msgs = append(msgs, f.Error())
 			}
 		}
-		e.log("error", "engine", "validation failed: "+strings.Join(msgs, "; "))
-		e.setPhase(PhaseFailed, "validation failed")
+		e.log("error", "engine", fmt.Sprintf("[%s] validation failed: %s", desired.Name, strings.Join(msgs, "; ")))
+		if d := e.lookup(desired.Name); d != nil {
+			e.setPhase(d, PhaseFailed, "validation failed")
+		}
 		return fmt.Errorf("%w: %s", ErrValidation, strings.Join(msgs, "; "))
 	}
+
+	d, err := e.begin(desired.Name, true)
+	if err != nil {
+		return err
+	}
+	defer e.end(d)
+
+	e.setPhase(d, PhaseValidating, "")
 	for _, f := range findings {
-		e.log("warn", "validate", f.Error())
+		e.log("warn", "validate", fmt.Sprintf("[%s] %s", d.name, f.Error()))
 	}
 
-	e.setPhase(PhasePlanning, "")
-	plan := planner.Diff(e.Current(), desired)
-	e.log("info", "planner", fmt.Sprintf("plan for %q: %d ops (%d hot, %d cold, %d structural)",
-		desired.Name, len(plan.Ops), plan.Summary.Hot, plan.Summary.Cold, plan.Summary.Structural))
+	e.setPhase(d, PhasePlanning, "")
+	current, _ := e.Current(d.name)
+	plan := planner.Diff(current, desired)
+	e.log("info", "planner", fmt.Sprintf("[%s] %d ops (%d hot, %d cold, %d structural)",
+		d.name, len(plan.Ops), plan.Summary.Hot, plan.Summary.Cold, plan.Summary.Structural))
 
-	e.setPhase(PhaseApplying, "")
+	e.setPhase(d, PhaseApplying, "")
 	start := time.Now()
-	if err := e.execute(ctx, plan, desired); err != nil {
-		e.setPhase(PhaseFailed, err.Error())
+	if err := e.execute(ctx, d, plan, desired); err != nil {
+		e.setPhase(d, PhaseFailed, err.Error())
 		return err
 	}
 
 	e.mu.Lock()
-	e.current = desired
+	d.current = desired
+	d.network = plan.Network
 	e.mu.Unlock()
-	e.log("info", "engine", fmt.Sprintf("apply complete in %s", time.Since(start).Round(time.Millisecond)))
+	e.log("info", "engine", fmt.Sprintf("[%s] apply complete in %s", d.name, time.Since(start).Round(time.Millisecond)))
 	if len(desired.Nodes) == 0 {
-		e.setPhase(PhaseIdle, "")
+		e.remove(d)
 	} else {
-		e.setPhase(PhaseRunning, "")
+		e.setPhase(d, PhaseRunning, "")
 	}
 	return nil
 }
 
-// Teardown destroys everything that is running.
-func (e *Engine) Teardown(ctx context.Context) error {
-	if err := e.begin(); err != nil {
+// Teardown destroys everything running under the named topology and forgets
+// the deployment.
+func (e *Engine) Teardown(ctx context.Context, name string) error {
+	d, err := e.begin(name, false)
+	if err != nil {
 		return err
 	}
-	defer e.end()
+	defer e.end(d)
 
-	cur := e.Current()
+	cur, _ := e.Current(name)
 	empty := spec.Topology{Version: cur.Version, Name: cur.Name}.Normalized()
 	plan := planner.Diff(cur, empty)
-	e.setPhase(PhaseTearingDown, "")
-	e.log("info", "engine", fmt.Sprintf("teardown: %d ops", len(plan.Ops)))
-	if err := e.execute(ctx, plan, empty); err != nil {
-		e.setPhase(PhaseFailed, err.Error())
+	e.setPhase(d, PhaseTearingDown, "")
+	e.log("info", "engine", fmt.Sprintf("[%s] teardown: %d ops", d.name, len(plan.Ops)))
+	if err := e.execute(ctx, d, plan, empty); err != nil {
+		e.setPhase(d, PhaseFailed, err.Error())
 		return err
 	}
 	e.mu.Lock()
-	e.current = empty
-	e.faults = map[string][]spec.FaultSpec{}
+	d.current = empty
+	d.faults = map[string][]spec.FaultSpec{}
 	e.mu.Unlock()
-	e.setPhase(PhaseIdle, "")
+	e.remove(d)
 	return nil
 }
 
-func (e *Engine) execute(ctx context.Context, plan planner.Plan, desired spec.Topology) error {
+func (e *Engine) execute(ctx context.Context, d *deployment, plan planner.Plan, desired spec.Topology) error {
 	for i, op := range plan.Ops {
 		started := time.Now()
-		e.progress(op, i, len(plan.Ops), "started", "", 0)
-		err := e.executeOp(ctx, op, plan.Network, desired)
+		e.progress(d, op, i, len(plan.Ops), "started", "", 0)
+		err := e.executeOp(ctx, d, op, plan.Network, desired)
 		elapsed := time.Since(started).Milliseconds()
 		if err != nil {
-			e.progress(op, i, len(plan.Ops), "failed", err.Error(), elapsed)
-			e.log("error", "engine", fmt.Sprintf("%s %s failed: %v", op.Kind, op.Target, err))
+			e.progress(d, op, i, len(plan.Ops), "failed", err.Error(), elapsed)
+			e.log("error", "engine", fmt.Sprintf("[%s] %s %s failed: %v", d.name, op.Kind, op.Target, err))
 			return fmt.Errorf("%s %s: %w", op.Kind, op.Target, err)
 		}
-		e.progress(op, i, len(plan.Ops), "done", "", elapsed)
+		e.progress(d, op, i, len(plan.Ops), "done", "", elapsed)
 	}
 	return nil
 }
 
-func (e *Engine) executeOp(ctx context.Context, op planner.Operation, network string, desired spec.Topology) error {
+func (e *Engine) executeOp(ctx context.Context, d *deployment, op planner.Operation, network string, desired spec.Topology) error {
 	switch op.Kind {
 	case planner.OpEnsureNetwork:
 		return e.rt.EnsureNetwork(ctx, op.Target)
@@ -248,9 +343,9 @@ func (e *Engine) executeOp(ctx context.Context, op planner.Operation, network st
 		if !ok {
 			return fmt.Errorf("node %q not in desired topology", op.Target)
 		}
-		e.setStatus(node.ID, string(runtime.StatePending), node.Replicas, 0, "")
+		e.setStatus(d, node.ID, string(runtime.StatePending), node.Replicas, 0, "")
 		for r := 1; r <= node.Replicas; r++ {
-			name := containerName(node.ID, r, node.Replicas)
+			name := containerName(d.slug, node.ID, r, node.Replicas)
 			cspec := runtime.ContainerSpec{
 				Name:    name,
 				Image:   node.Image,
@@ -263,12 +358,12 @@ func (e *Engine) executeOp(ctx context.Context, op planner.Operation, network st
 				},
 			}
 			e.mu.Lock()
-			e.containers[name] = node.ID
+			e.containers[name] = containerRef{dep: d.name, node: node.ID}
 			e.mu.Unlock()
 			if _, err := e.rt.Create(ctx, cspec); err != nil {
 				return err
 			}
-			e.log("info", "runtime", fmt.Sprintf("created %s (%s)", name, node.Image))
+			e.log("info", "runtime", fmt.Sprintf("[%s] created %s (%s)", d.name, name, node.Image))
 			if err := e.rt.Start(ctx, name); err != nil {
 				return err
 			}
@@ -276,7 +371,7 @@ func (e *Engine) executeOp(ctx context.Context, op planner.Operation, network st
 		return nil
 
 	case planner.OpWaitHealthy:
-		return e.waitHealthy(ctx, op.Target)
+		return e.waitHealthy(ctx, d, op.Target)
 
 	case planner.OpEnsureTopic:
 		// Seam: a real implementation talks to the broker's admin API
@@ -284,7 +379,7 @@ func (e *Engine) executeOp(ctx context.Context, op planner.Operation, network st
 		if err := sleepCtx(ctx, 80*time.Millisecond); err != nil {
 			return err
 		}
-		e.log("info", "broker", fmt.Sprintf("ensured topic %v on %v", op.Params["topic"], op.Params["broker"]))
+		e.log("info", "broker", fmt.Sprintf("[%s] ensured topic %v on %v", d.name, op.Params["topic"], op.Params["broker"]))
 		return nil
 
 	case planner.OpControl:
@@ -293,11 +388,11 @@ func (e *Engine) executeOp(ctx context.Context, op planner.Operation, network st
 		if err := sleepCtx(ctx, 40*time.Millisecond); err != nil {
 			return err
 		}
-		e.log("info", "control", fmt.Sprintf("%s: %s", op.Target, op.Reason))
+		e.log("info", "control", fmt.Sprintf("[%s] %s: %s", d.name, op.Target, op.Reason))
 		return nil
 
 	case planner.OpDestroy:
-		names := e.containersFor(op.Target)
+		names := e.containersFor(d.name, op.Target)
 		for _, name := range names {
 			if err := e.rt.Destroy(ctx, name); err != nil && !errors.Is(err, runtime.ErrNotFound) {
 				return err
@@ -305,24 +400,24 @@ func (e *Engine) executeOp(ctx context.Context, op planner.Operation, network st
 			e.mu.Lock()
 			delete(e.containers, name)
 			e.mu.Unlock()
-			e.log("info", "runtime", "destroyed "+name)
+			e.log("info", "runtime", fmt.Sprintf("[%s] destroyed %s", d.name, name))
 		}
 		e.mu.Lock()
-		delete(e.statuses, op.Target)
-		delete(e.faults, op.Target)
+		delete(d.statuses, op.Target)
+		delete(d.faults, op.Target)
 		e.mu.Unlock()
 		e.bus.Publish(events.NodeStatus, events.NodeStatusPayload{
-			NodeID: op.Target, State: "removed", UpdatedAt: time.Now().UnixMilli(),
+			Deployment: d.name, NodeID: op.Target, State: "removed", UpdatedAt: time.Now().UnixMilli(),
 		})
 		return nil
 	}
 	return fmt.Errorf("unknown op kind %q", op.Kind)
 }
 
-func (e *Engine) waitHealthy(ctx context.Context, nodeID string) error {
+func (e *Engine) waitHealthy(ctx context.Context, d *deployment, nodeID string) error {
 	deadline := time.Now().Add(healthyTimeout)
 	for {
-		names := e.containersFor(nodeID)
+		names := e.containersFor(d.name, nodeID)
 		healthy := 0
 		for _, name := range names {
 			c, err := e.rt.Inspect(ctx, name)
@@ -352,20 +447,25 @@ func (e *Engine) waitHealthy(ctx context.Context, nodeID string) error {
 
 // SetHotConfig applies a hot patch to a running node immediately. Keys must
 // already exist in the node's hot config; the patch is merged into the
-// engine's current topology so a later Diff sees no drift.
-func (e *Engine) SetHotConfig(ctx context.Context, nodeID string, patch map[string]any) error {
+// deployment's current topology so a later Diff sees no drift.
+func (e *Engine) SetHotConfig(ctx context.Context, depName, nodeID string, patch map[string]any) error {
 	e.mu.Lock()
+	d := e.deps[depName]
+	if d == nil {
+		e.mu.Unlock()
+		return fmt.Errorf("%w: %s", ErrNotDeployed, depName)
+	}
 	idx := -1
-	for i, n := range e.current.Nodes {
+	for i, n := range d.current.Nodes {
 		if n.ID == nodeID {
 			idx = i
 		}
 	}
-	if idx < 0 || e.statuses[nodeID] == nil {
+	if idx < 0 || d.statuses[nodeID] == nil {
 		e.mu.Unlock()
 		return fmt.Errorf("%w: %s", ErrNodeNotRunning, nodeID)
 	}
-	node := &e.current.Nodes[idx]
+	node := &d.current.Nodes[idx]
 	changed := map[string]any{}
 	for k, v := range patch {
 		if _, ok := node.Config.Hot[k]; !ok {
@@ -389,15 +489,15 @@ func (e *Engine) SetHotConfig(ctx context.Context, nodeID string, patch map[stri
 		Class:  planner.ClassHot,
 		Params: changed,
 	}
-	e.progress(op, 0, 1, "started", "", 0)
+	e.progress(d, op, 0, 1, "started", "", 0)
 	// Seam: same control transport as executeOp(OpControl).
-	e.progress(op, 0, 1, "done", "", 0)
+	e.progress(d, op, 0, 1, "done", "", 0)
 	parts := []string{}
 	for k, v := range changed {
 		parts = append(parts, fmt.Sprintf("%s=%s", k, spec.CanonValue(v)))
 	}
 	sort.Strings(parts)
-	e.log("info", "control", fmt.Sprintf("%s: %s (no restart)", nodeID, strings.Join(parts, ", ")))
+	e.log("info", "control", fmt.Sprintf("[%s] %s: %s (no restart)", d.name, nodeID, strings.Join(parts, ", ")))
 	return nil
 }
 
@@ -405,20 +505,24 @@ func (e *Engine) SetHotConfig(ctx context.Context, nodeID string, patch map[stri
 // executed through the runtime because they are pure container operations;
 // latency, drop, partition and cpu_stress are logged only until the proxy /
 // tc / stress seams exist.
-func (e *Engine) InjectFault(ctx context.Context, nodeID string, fault spec.FaultSpec) error {
+func (e *Engine) InjectFault(ctx context.Context, depName, nodeID string, fault spec.FaultSpec) error {
 	if !fault.Kind.Valid() {
 		return fmt.Errorf("engine: unknown fault kind %q", fault.Kind)
 	}
 	e.mu.Lock()
-	st := e.statuses[nodeID]
-	if st == nil {
+	d := e.deps[depName]
+	if d == nil {
+		e.mu.Unlock()
+		return fmt.Errorf("%w: %s", ErrNotDeployed, depName)
+	}
+	if d.statuses[nodeID] == nil {
 		e.mu.Unlock()
 		return fmt.Errorf("%w: %s", ErrNodeNotRunning, nodeID)
 	}
-	e.faults[nodeID] = append(e.faults[nodeID], fault)
+	d.faults[nodeID] = append(d.faults[nodeID], fault)
 	e.mu.Unlock()
 
-	names := e.containersFor(nodeID)
+	names := e.containersFor(d.name, nodeID)
 	switch fault.Kind {
 	case spec.FaultPause:
 		for _, n := range names {
@@ -436,30 +540,35 @@ func (e *Engine) InjectFault(ctx context.Context, nodeID string, fault spec.Faul
 		// Seam: toxiproxy toxics for latency/drop, netem/iptables for
 		// partition, stress-ng exec for cpu_stress.
 	}
-	e.log("warn", "fault", fmt.Sprintf("injected %s into %s (%dms) %v", fault.Kind, nodeID, fault.DurationMs, fault.Params))
-	e.bus.Publish(events.FaultInjected, events.FaultPayload{NodeID: nodeID, Kind: string(fault.Kind), DurationMs: fault.DurationMs, Active: true})
-	e.setStatusMessage(nodeID, "fault: "+string(fault.Kind))
+	e.log("warn", "fault", fmt.Sprintf("[%s] injected %s into %s (%dms) %v", d.name, fault.Kind, nodeID, fault.DurationMs, fault.Params))
+	e.bus.Publish(events.FaultInjected, events.FaultPayload{Deployment: d.name, NodeID: nodeID, Kind: string(fault.Kind), DurationMs: fault.DurationMs, Active: true})
+	e.setStatusMessage(d, nodeID, "fault: "+string(fault.Kind))
 
 	if fault.DurationMs > 0 {
 		time.AfterFunc(time.Duration(fault.DurationMs)*time.Millisecond, func() {
-			e.clearFault(nodeID, fault)
+			e.clearFault(d, nodeID, fault)
 		})
 	}
 	return nil
 }
 
-func (e *Engine) clearFault(nodeID string, fault spec.FaultSpec) {
+func (e *Engine) clearFault(d *deployment, nodeID string, fault spec.FaultSpec) {
 	e.mu.Lock()
-	fs := e.faults[nodeID]
+	if e.deps[d.name] != d {
+		// torn down in the meantime; nothing left to clear
+		e.mu.Unlock()
+		return
+	}
+	fs := d.faults[nodeID]
 	for i, f := range fs {
 		if f.Kind == fault.Kind {
-			e.faults[nodeID] = append(fs[:i], fs[i+1:]...)
+			d.faults[nodeID] = append(fs[:i], fs[i+1:]...)
 			break
 		}
 	}
 	e.mu.Unlock()
 	ctx := context.Background()
-	for _, n := range e.containersFor(nodeID) {
+	for _, n := range e.containersFor(d.name, nodeID) {
 		switch fault.Kind {
 		case spec.FaultPause:
 			_ = e.rt.Unpause(ctx, n)
@@ -467,26 +576,26 @@ func (e *Engine) clearFault(nodeID string, fault spec.FaultSpec) {
 			_ = e.rt.Start(ctx, n)
 		}
 	}
-	e.log("info", "fault", fmt.Sprintf("cleared %s on %s", fault.Kind, nodeID))
-	e.bus.Publish(events.FaultInjected, events.FaultPayload{NodeID: nodeID, Kind: string(fault.Kind), Active: false})
-	e.setStatusMessage(nodeID, "")
+	e.log("info", "fault", fmt.Sprintf("[%s] cleared %s on %s", d.name, fault.Kind, nodeID))
+	e.bus.Publish(events.FaultInjected, events.FaultPayload{Deployment: d.name, NodeID: nodeID, Kind: string(fault.Kind), Active: false})
+	e.setStatusMessage(d, nodeID, "")
 }
 
 // --- status bookkeeping ---------------------------------------------------
 
 func (e *Engine) onContainerState(c runtime.Container) {
 	e.mu.Lock()
-	nodeID, ok := e.containers[c.Name]
-	if !ok {
-		e.mu.Unlock()
+	ref, ok := e.containers[c.Name]
+	d := e.deps[ref.dep]
+	e.mu.Unlock()
+	if !ok || d == nil {
 		return
 	}
-	e.mu.Unlock()
-	e.recomputeStatus(nodeID)
+	e.recomputeStatus(d, ref.node)
 }
 
-func (e *Engine) recomputeStatus(nodeID string) {
-	names := e.containersFor(nodeID)
+func (e *Engine) recomputeStatus(d *deployment, nodeID string) {
+	names := e.containersFor(d.name, nodeID)
 	ctx := context.Background()
 	ready := 0
 	worst := runtime.StateHealthy
@@ -503,7 +612,7 @@ func (e *Engine) recomputeStatus(nodeID string) {
 		}
 	}
 	e.mu.Lock()
-	st := e.statuses[nodeID]
+	st := d.statuses[nodeID]
 	if st == nil {
 		e.mu.Unlock()
 		return
@@ -511,7 +620,7 @@ func (e *Engine) recomputeStatus(nodeID string) {
 	replicas := st.Replicas
 	msg := st.Message
 	e.mu.Unlock()
-	e.setStatus(nodeID, string(worst), replicas, ready, msg)
+	e.setStatus(d, nodeID, string(worst), replicas, ready, msg)
 }
 
 // stateRank orders states by "badness" so a node reports its worst replica.
@@ -533,35 +642,42 @@ func stateRank(s runtime.State) int {
 	return 6
 }
 
-func (e *Engine) setStatus(nodeID, state string, replicas, ready int, msg string) {
+func (e *Engine) setStatus(d *deployment, nodeID, state string, replicas, ready int, msg string) {
 	e.mu.Lock()
 	st := &NodeStatus{NodeID: nodeID, State: state, Replicas: replicas, Ready: ready, Message: msg, UpdatedAt: time.Now().UnixMilli()}
-	e.statuses[nodeID] = st
-	payload := events.NodeStatusPayload(*st)
+	d.statuses[nodeID] = st
+	payload := statusPayload(d.name, *st)
 	e.mu.Unlock()
 	e.bus.Publish(events.NodeStatus, payload)
 }
 
-func (e *Engine) setStatusMessage(nodeID, msg string) {
+func (e *Engine) setStatusMessage(d *deployment, nodeID, msg string) {
 	e.mu.Lock()
-	st := e.statuses[nodeID]
+	st := d.statuses[nodeID]
 	if st == nil {
 		e.mu.Unlock()
 		return
 	}
 	st.Message = msg
 	st.UpdatedAt = time.Now().UnixMilli()
-	payload := events.NodeStatusPayload(*st)
+	payload := statusPayload(d.name, *st)
 	e.mu.Unlock()
 	e.bus.Publish(events.NodeStatus, payload)
 }
 
-func (e *Engine) containersFor(nodeID string) []string {
+func statusPayload(dep string, st NodeStatus) events.NodeStatusPayload {
+	return events.NodeStatusPayload{
+		Deployment: dep, NodeID: st.NodeID, State: st.State, Replicas: st.Replicas,
+		Ready: st.Ready, Message: st.Message, UpdatedAt: st.UpdatedAt,
+	}
+}
+
+func (e *Engine) containersFor(depName, nodeID string) []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	var out []string
-	for name, id := range e.containers {
-		if id == nodeID {
+	for name, ref := range e.containers {
+		if ref.dep == depName && ref.node == nodeID {
 			out = append(out, name)
 		}
 	}
@@ -569,32 +685,72 @@ func (e *Engine) containersFor(nodeID string) []string {
 	return out
 }
 
-func (e *Engine) begin() error {
+func (e *Engine) lookup(name string) *deployment {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.applying {
-		return ErrBusy
+	return e.deps[name]
+}
+
+// begin marks a deployment as busy, creating it when create is set. Two
+// operations on the same deployment cannot overlap; different deployments
+// can.
+func (e *Engine) begin(name string, create bool) (*deployment, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	d := e.deps[name]
+	if d == nil {
+		if !create {
+			return nil, fmt.Errorf("%w: %s", ErrNotDeployed, name)
+		}
+		d = &deployment{
+			name:     name,
+			slug:     spec.Slug(name),
+			phase:    PhaseIdle,
+			current:  spec.Topology{Version: spec.CurrentVersion, Name: name}.Normalized(),
+			statuses: map[string]*NodeStatus{},
+			faults:   map[string][]spec.FaultSpec{},
+		}
+		e.deps[name] = d
 	}
-	e.applying = true
-	return nil
+	if d.applying {
+		return nil, ErrBusy
+	}
+	d.applying = true
+	return d, nil
 }
 
-func (e *Engine) end() {
+func (e *Engine) end(d *deployment) {
 	e.mu.Lock()
-	e.applying = false
+	d.applying = false
 	e.mu.Unlock()
 }
 
-func (e *Engine) setPhase(p Phase, msg string) {
+// remove forgets a deployment that has nothing running any more.
+func (e *Engine) remove(d *deployment) {
 	e.mu.Lock()
-	e.phase = p
+	if e.deps[d.name] == d {
+		delete(e.deps, d.name)
+	}
+	for name, ref := range e.containers {
+		if ref.dep == d.name {
+			delete(e.containers, name)
+		}
+	}
 	e.mu.Unlock()
-	e.bus.Publish(events.EnginePhase, events.PhasePayload{Phase: string(p), Message: msg})
+	e.bus.Publish(events.EnginePhase, events.PhasePayload{Deployment: d.name, Phase: string(PhaseGone)})
 }
 
-func (e *Engine) progress(op planner.Operation, idx, count int, status, msg string, elapsed int64) {
+func (e *Engine) setPhase(d *deployment, p Phase, msg string) {
+	e.mu.Lock()
+	d.phase = p
+	e.mu.Unlock()
+	e.bus.Publish(events.EnginePhase, events.PhasePayload{Deployment: d.name, Phase: string(p), Message: msg})
+}
+
+func (e *Engine) progress(d *deployment, op planner.Operation, idx, count int, status, msg string, elapsed int64) {
 	e.bus.Publish(events.ApplyProgress, events.ProgressPayload{
-		OpID: op.ID, Index: idx, Count: count, Kind: string(op.Kind), Target: op.Target,
+		Deployment: d.name,
+		OpID:       op.ID, Index: idx, Count: count, Kind: string(op.Kind), Target: op.Target,
 		Class: string(op.Class), Status: status, Message: msg, Elapsed: elapsed,
 	})
 }
@@ -603,11 +759,11 @@ func (e *Engine) log(level, source, msg string) {
 	e.bus.Log(level, source, msg)
 }
 
-func containerName(nodeID string, replica, total int) string {
+func containerName(slug, nodeID string, replica, total int) string {
 	if total <= 1 {
-		return nodeID
+		return slug + "-" + nodeID
 	}
-	return fmt.Sprintf("%s-%d", nodeID, replica)
+	return fmt.Sprintf("%s-%s-%d", slug, nodeID, replica)
 }
 
 // envFor flattens cold config into environment variables; hot config is

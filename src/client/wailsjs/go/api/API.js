@@ -10,32 +10,28 @@ export function DeleteUserTemplate(arg1) {
   return window['go']['api']['API']['DeleteUserTemplate'](arg1);
 }
 
+export function GetDeployments() {
+  return window['go']['api']['API']['GetDeployments']();
+}
+
+export function GetHostStats() {
+  return window['go']['api']['API']['GetHostStats']();
+}
+
 export function GetLogHistory() {
   return window['go']['api']['API']['GetLogHistory']();
-}
-
-export function GetNodeStatus() {
-  return window['go']['api']['API']['GetNodeStatus']();
-}
-
-export function GetPhase() {
-  return window['go']['api']['API']['GetPhase']();
 }
 
 export function GetPresets() {
   return window['go']['api']['API']['GetPresets']();
 }
 
-export function GetTopology() {
-  return window['go']['api']['API']['GetTopology']();
-}
-
 export function GetUserTemplates() {
   return window['go']['api']['API']['GetUserTemplates']();
 }
 
-export function InjectFault(arg1, arg2) {
-  return window['go']['api']['API']['InjectFault'](arg1, arg2);
+export function InjectFault(arg1, arg2, arg3) {
+  return window['go']['api']['API']['InjectFault'](arg1, arg2, arg3);
 }
 
 export function PlanApply(arg1) {
@@ -46,12 +42,12 @@ export function SaveUserTemplate(arg1) {
   return window['go']['api']['API']['SaveUserTemplate'](arg1);
 }
 
-export function SetHotConfig(arg1, arg2) {
-  return window['go']['api']['API']['SetHotConfig'](arg1, arg2);
+export function SetHotConfig(arg1, arg2, arg3) {
+  return window['go']['api']['API']['SetHotConfig'](arg1, arg2, arg3);
 }
 
-export function Teardown() {
-  return window['go']['api']['API']['Teardown']();
+export function Teardown(arg1) {
+  return window['go']['api']['API']['Teardown'](arg1);
 }
 
 export function ValidateTopology(arg1) {

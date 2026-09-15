@@ -5,10 +5,10 @@ import {
   fromWireTopology,
   toWireFault,
   toWireTopology,
+  type DeploymentInfo,
   type FaultSpec,
+  type HostStatsEvent,
   type LogEvent,
-  type NodeStatus,
-  type Phase,
   type Plan,
   type Topology,
   type ValidationError,
@@ -27,8 +27,15 @@ export function hasBackend(): boolean {
 }
 
 export const backend = {
-  async getTopology(): Promise<Topology> {
-    return fromWireTopology(await API.GetTopology())
+  async getDeployments(): Promise<DeploymentInfo[]> {
+    const list = (await API.GetDeployments()) as unknown as DeploymentInfo[]
+    return list.map((d) => ({
+      name: d.name,
+      phase: d.phase,
+      network: d.network,
+      topology: fromWireTopology(d.topology),
+      statuses: d.statuses ?? {},
+    }))
   },
   async getPresets(): Promise<Topology[]> {
     return (await API.GetPresets()).map(fromWireTopology)
@@ -41,9 +48,6 @@ export const backend = {
   },
   async deleteUserTemplate(name: string): Promise<Topology[]> {
     return (await API.DeleteUserTemplate(name)).map(fromWireTopology)
-  },
-  getPhase(): Promise<Phase> {
-    return API.GetPhase() as Promise<Phase>
   },
   async getLogHistory(): Promise<LogEvent[]> {
     const lines = await API.GetLogHistory()
@@ -63,17 +67,17 @@ export const backend = {
   apply(t: Topology): Promise<void> {
     return API.Apply(toWireTopology(t))
   },
-  teardown(): Promise<void> {
-    return API.Teardown()
+  teardown(deployment: string): Promise<void> {
+    return API.Teardown(deployment)
   },
-  setHotConfig(nodeId: string, patch: Record<string, unknown>): Promise<void> {
-    return API.SetHotConfig(nodeId, patch)
+  setHotConfig(deployment: string, nodeId: string, patch: Record<string, unknown>): Promise<void> {
+    return API.SetHotConfig(deployment, nodeId, patch)
   },
-  injectFault(nodeId: string, fault: FaultSpec): Promise<void> {
-    return API.InjectFault(nodeId, toWireFault(fault))
+  injectFault(deployment: string, nodeId: string, fault: FaultSpec): Promise<void> {
+    return API.InjectFault(deployment, nodeId, toWireFault(fault))
   },
-  getNodeStatus(): Promise<Record<string, NodeStatus>> {
-    return API.GetNodeStatus() as Promise<Record<string, NodeStatus>>
+  getHostStats(): Promise<HostStatsEvent[]> {
+    return API.GetHostStats() as unknown as Promise<HostStatsEvent[]>
   },
 }
 

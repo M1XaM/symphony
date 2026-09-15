@@ -1,7 +1,8 @@
-// Package metrics produces the realtime sample stream shown in the inspector
-// chart. Today it is a mock random walk seeded from engine state; the real
-// implementation will pull from the load generator and broker admin APIs
-// and keep the same MetricsPayload shape.
+// Package metrics produces the realtime sample streams shown in the UI: the
+// global run metrics (metrics:tick) and the per-edge link health that colours
+// the map (link:health). Today both are mocks seeded from engine state; the
+// real implementation will pull from the load generator, the proxies and the
+// broker admin APIs and keep the same payload shapes.
 package metrics
 
 import (
@@ -13,13 +14,34 @@ import (
 
 	"symphony/engine/core"
 	"symphony/engine/events"
+	"symphony/engine/spec"
 )
 
-// Ticker emits events.MetricsTick on a fixed interval.
+// Thresholds on a link's error rate (share of requests or messages that were
+// not delivered or failed) for the map colours: below WarnThreshold is green,
+// from WarnThreshold up is yellow, from CritThreshold up is red.
+const (
+	WarnThreshold = 0.05
+	CritThreshold = 0.25
+)
+
+// Level classifies an error rate against the thresholds.
+func Level(errorRate float64) events.LinkLevel {
+	switch {
+	case errorRate >= CritThreshold:
+		return events.LinkCrit
+	case errorRate >= WarnThreshold:
+		return events.LinkWarn
+	}
+	return events.LinkOK
+}
+
+// Ticker emits events.MetricsTick and events.LinkHealth on a fixed interval.
 type Ticker struct {
 	bus      *events.Bus
 	interval time.Duration
 	inputs   func() core.MetricInputs
+	links    func() []core.LinkInput
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
@@ -28,11 +50,12 @@ type Ticker struct {
 	window []float64
 }
 
-func NewTicker(bus *events.Bus, interval time.Duration, inputs func() core.MetricInputs) *Ticker {
+func NewTicker(bus *events.Bus, interval time.Duration, inputs func() core.MetricInputs, links func() []core.LinkInput) *Ticker {
 	return &Ticker{
 		bus:      bus,
 		interval: interval,
 		inputs:   inputs,
+		links:    links,
 		rng:      rand.New(rand.NewSource(time.Now().UnixNano())),
 		base:     42,
 	}
@@ -66,6 +89,9 @@ func (t *Ticker) loop(ctx context.Context) {
 			return
 		case <-tk.C:
 			t.bus.Publish(events.MetricsTick, t.sample())
+			for _, p := range t.sampleLinks() {
+				t.bus.Publish(events.LinkHealth, p)
+			}
 		}
 	}
 }
@@ -113,6 +139,61 @@ func (t *Ticker) sample() events.MetricsPayload {
 		CPUPct:       round1(math.Min(100, math.Max(0, cpu))),
 		ActiveFaults: in.ActiveFaults,
 	}
+}
+
+// sampleLinks derives an error rate for every edge of every live deployment
+// from the state of the nodes at its ends and the faults on them. Replace
+// with real counters (proxy toxics, consumer offsets) keeping the payload.
+func (t *Ticker) sampleLinks() []events.LinkHealthPayload {
+	byDep := map[string]*events.LinkHealthPayload{}
+	var order []string
+	now := time.Now().UnixMilli()
+	for _, in := range t.links() {
+		p := byDep[in.Deployment]
+		if p == nil {
+			p = &events.LinkHealthPayload{Deployment: in.Deployment, Ts: now, Links: map[string]events.LinkHealthEntry{}}
+			byDep[in.Deployment] = p
+			order = append(order, in.Deployment)
+		}
+		rate := t.errorRate(in)
+		p.Links[in.EdgeID] = events.LinkHealthEntry{ErrorRate: math.Round(rate*1000) / 1000, Level: Level(rate)}
+	}
+	out := make([]events.LinkHealthPayload, 0, len(order))
+	for _, name := range order {
+		out = append(out, *byDep[name])
+	}
+	return out
+}
+
+func (t *Ticker) errorRate(in core.LinkInput) float64 {
+	// A healthy link still drops the odd request: 0.2%-1.5% background noise.
+	rate := 0.002 + t.rng.Float64()*0.013
+	for _, s := range in.States {
+		switch s {
+		case "healthy":
+		case "starting", "pending":
+			rate += 0.10 + t.rng.Float64()*0.10 // some replicas not answering yet
+		default: // paused, stopped, failed
+			rate = 1
+		}
+	}
+	for _, f := range in.Faults {
+		switch f.Kind {
+		case spec.FaultDrop:
+			r, _ := f.Params["rate"].(float64)
+			if r <= 0 {
+				r = 0.1
+			}
+			rate += r
+		case spec.FaultLatency:
+			rate += 0.06 + t.rng.Float64()*0.04 // slow answers time out
+		case spec.FaultCPU:
+			rate += 0.02 + t.rng.Float64()*0.03
+		case spec.FaultPartition, spec.FaultKill, spec.FaultPause:
+			rate = 1
+		}
+	}
+	return math.Min(1, math.Max(0, rate))
 }
 
 func percentile(xs []float64, p float64) float64 {

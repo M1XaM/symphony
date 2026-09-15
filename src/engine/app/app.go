@@ -19,6 +19,7 @@ import (
 	"symphony/engine/api"
 	"symphony/engine/core"
 	"symphony/engine/events"
+	"symphony/engine/hoststats"
 	"symphony/engine/library"
 	"symphony/engine/metrics"
 	"symphony/engine/runtime"
@@ -65,13 +66,14 @@ func Run(opts Options) error {
 	rt := runtime.NewFake(runtime.FakeOptions{})
 	// Swap for runtime.NewDocker("") once DockerRuntime is implemented.
 	eng := core.New(rt, bus)
-	tick := metrics.NewTicker(bus, 500*time.Millisecond, eng.MetricInputs)
+	tick := metrics.NewTicker(bus, 500*time.Millisecond, eng.MetricInputs, eng.LinkInputs)
+	host := hoststats.New(bus, time.Second)
 
 	libPath, err := library.DefaultPath()
 	if err != nil {
 		bus.Log("warn", "library", err.Error()+" — saved templates will not persist")
 	}
-	bound := api.New(eng, bus, library.New(libPath))
+	bound := api.New(eng, bus, library.New(libPath), host)
 
 	return wails.Run(&options.App{
 		Title:     opts.Title,
@@ -91,8 +93,10 @@ func Run(opts Options) error {
 		OnStartup: func(ctx context.Context) {
 			api.Startup(bound, ctx)
 			tick.Start(ctx)
+			host.Start(ctx)
 		},
 		OnShutdown: func(ctx context.Context) {
+			host.Stop()
 			tick.Stop()
 			api.Shutdown(bound)
 		},

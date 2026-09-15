@@ -1,5 +1,94 @@
+export namespace core {
+	
+	export class NodeStatus {
+	    node_id: string;
+	    state: string;
+	    replicas: number;
+	    ready: number;
+	    message?: string;
+	    updated_at: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new NodeStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.node_id = source["node_id"];
+	        this.state = source["state"];
+	        this.replicas = source["replicas"];
+	        this.ready = source["ready"];
+	        this.message = source["message"];
+	        this.updated_at = source["updated_at"];
+	    }
+	}
+	export class DeploymentInfo {
+	    name: string;
+	    phase: string;
+	    network: string;
+	    topology: spec.Topology;
+	    statuses: Record<string, NodeStatus>;
+	
+	    static createFrom(source: any = {}) {
+	        return new DeploymentInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.phase = source["phase"];
+	        this.network = source["network"];
+	        this.topology = this.convertValues(source["topology"], spec.Topology);
+	        this.statuses = this.convertValues(source["statuses"], NodeStatus, true);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+
+}
+
 export namespace events {
 	
+	export class HostStatsPayload {
+	    ts: number;
+	    cpu_pct: number;
+	    mem_pct: number;
+	    mem_used_bytes: number;
+	    mem_total_bytes: number;
+	    net_rx_bps: number;
+	    net_tx_bps: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new HostStatsPayload(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ts = source["ts"];
+	        this.cpu_pct = source["cpu_pct"];
+	        this.mem_pct = source["mem_pct"];
+	        this.mem_used_bytes = source["mem_used_bytes"];
+	        this.mem_total_bytes = source["mem_total_bytes"];
+	        this.net_rx_bps = source["net_rx_bps"];
+	        this.net_tx_bps = source["net_tx_bps"];
+	    }
+	}
 	export class LogPayload {
 	    level: string;
 	    source: string;

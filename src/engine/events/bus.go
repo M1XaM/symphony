@@ -18,6 +18,8 @@ const (
 	EnginePhase   Type = "engine:phase"   // PhasePayload, engine state machine transitions
 	NodeStatus    Type = "node:status"    // NodeStatusPayload, per-node runtime state
 	MetricsTick   Type = "metrics:tick"   // MetricsPayload, emitted every 500ms
+	LinkHealth    Type = "link:health"    // LinkHealthPayload, one per deployment every 500ms
+	HostStats     Type = "host:stats"     // HostStatsPayload, host machine usage every second
 	FaultInjected Type = "fault:injected" // FaultPayload
 )
 
@@ -30,15 +32,16 @@ type Event struct {
 
 // ProgressPayload reports the lifecycle of one plan operation.
 type ProgressPayload struct {
-	OpID    string `json:"op_id"`
-	Index   int    `json:"index"` // 0-based position in the plan
-	Count   int    `json:"count"` // total operations in the plan
-	Kind    string `json:"kind"`
-	Target  string `json:"target"`
-	Class   string `json:"class"`
-	Status  string `json:"status"` // started | done | failed
-	Message string `json:"message,omitempty"`
-	Elapsed int64  `json:"elapsed_ms"`
+	Deployment string `json:"deployment"` // name of the topology the plan belongs to
+	OpID       string `json:"op_id"`
+	Index      int    `json:"index"` // 0-based position in the plan
+	Count      int    `json:"count"` // total operations in the plan
+	Kind       string `json:"kind"`
+	Target     string `json:"target"`
+	Class      string `json:"class"`
+	Status     string `json:"status"` // started | done | failed
+	Message    string `json:"message,omitempty"`
+	Elapsed    int64  `json:"elapsed_ms"`
 }
 
 // LogPayload is a free-form log line.
@@ -49,20 +52,23 @@ type LogPayload struct {
 	Ts      int64  `json:"ts"` // unix ms
 }
 
-// PhasePayload announces an engine phase change.
+// PhasePayload announces a deployment's phase change. Phase "gone" means the
+// deployment was torn down and no longer exists.
 type PhasePayload struct {
-	Phase   string `json:"phase"`
-	Message string `json:"message,omitempty"`
+	Deployment string `json:"deployment"`
+	Phase      string `json:"phase"`
+	Message    string `json:"message,omitempty"`
 }
 
 // NodeStatusPayload is the runtime state of a topology node.
 type NodeStatusPayload struct {
-	NodeID    string `json:"node_id"`
-	State     string `json:"state"` // pending | starting | healthy | failed | stopped | paused | removed
-	Replicas  int    `json:"replicas"`
-	Ready     int    `json:"ready"`
-	Message   string `json:"message,omitempty"`
-	UpdatedAt int64  `json:"updated_at"`
+	Deployment string `json:"deployment"`
+	NodeID     string `json:"node_id"`
+	State      string `json:"state"` // pending | starting | healthy | failed | stopped | paused | removed
+	Replicas   int    `json:"replicas"`
+	Ready      int    `json:"ready"`
+	Message    string `json:"message,omitempty"`
+	UpdatedAt  int64  `json:"updated_at"`
 }
 
 // MetricsPayload is one sample from the metrics pipeline.
@@ -76,8 +82,43 @@ type MetricsPayload struct {
 	ActiveFaults int     `json:"active_faults"`
 }
 
+// LinkLevel classifies a link's error rate for the map: ok (green), warn
+// (yellow) and crit (red).
+type LinkLevel string
+
+const (
+	LinkOK   LinkLevel = "ok"
+	LinkWarn LinkLevel = "warn"
+	LinkCrit LinkLevel = "crit"
+)
+
+// LinkHealthEntry is the sampled health of one edge.
+type LinkHealthEntry struct {
+	ErrorRate float64   `json:"error_rate"` // 0..1, share of requests/messages lost or failed
+	Level     LinkLevel `json:"level"`
+}
+
+// LinkHealthPayload carries every edge of one deployment, keyed by edge id.
+type LinkHealthPayload struct {
+	Deployment string                     `json:"deployment"`
+	Ts         int64                      `json:"ts"`
+	Links      map[string]LinkHealthEntry `json:"links"`
+}
+
+// HostStatsPayload is one sample of the host machine's resource usage.
+type HostStatsPayload struct {
+	Ts       int64   `json:"ts"`
+	CPUPct   float64 `json:"cpu_pct"`
+	MemPct   float64 `json:"mem_pct"`
+	MemUsed  uint64  `json:"mem_used_bytes"`
+	MemTotal uint64  `json:"mem_total_bytes"`
+	NetRxBps float64 `json:"net_rx_bps"` // bytes per second received, all interfaces
+	NetTxBps float64 `json:"net_tx_bps"` // bytes per second sent, all interfaces
+}
+
 // FaultPayload records a fault being injected or cleared.
 type FaultPayload struct {
+	Deployment string `json:"deployment"`
 	NodeID     string `json:"node_id"`
 	Kind       string `json:"kind"`
 	DurationMs int    `json:"duration_ms"`

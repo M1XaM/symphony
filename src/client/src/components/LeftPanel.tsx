@@ -5,9 +5,9 @@ import { Palette } from './Palette'
 function TemplateRow({ template, custom }: { template: Topology; custom: boolean }) {
   const isActive = useSymphonyStore((s) => s.topology.name === template.name)
   // Live against the engine, which is a different thing from being on the
-  // canvas: you can be looking at one template while another one runs.
-  const isLive = useSymphonyStore((s) => s.appliedName === template.name)
-  const phase = useSymphonyStore((s) => s.phase)
+  // canvas: any number of templates can run while you look at another one.
+  const phase = useSymphonyStore((s) => s.deployments[template.name]?.phase)
+  const isLive = phase !== undefined
   const loadTemplate = useSymphonyStore((s) => s.loadTemplate)
   const deleteTemplate = useSymphonyStore((s) => s.deleteTemplate)
 

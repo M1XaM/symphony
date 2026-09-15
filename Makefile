@@ -10,6 +10,8 @@
 #   make run             -> build then launch ./bin/install
 #   make clean           -> remove build outputs
 #   make clean-docker    -> also remove the builder image and cache volumes
+#   make desktop         -> register bin/symphony.desktop with the desktop, so the
+#                           app launches from the app grid with no terminal
 #
 # Native targets (need a local Go/Node/Wails toolchain, see README):
 #   make build-local     -> wails build on the host
@@ -55,7 +57,7 @@ DOCKER_RUN = $(DOCKER) run --rm \
   -v $(IMAGE)-node-modules:/work/client/node_modules \
   -e HOST_UID=$(HOST_UID) -e HOST_GID=$(HOST_GID) -e PLATFORM=$(PLATFORM)
 
-.PHONY: build image shell run clean clean-docker build-local dev deps bindings check
+.PHONY: build image shell run clean clean-docker build-local dev deps bindings check desktop
 
 build: image
 	$(DOCKER_RUN) $(IMAGE)
@@ -82,7 +84,7 @@ clean-docker: clean
 
 GOBIN     ?= $(shell go env GOPATH 2>/dev/null)/bin
 WAILS     ?= $(shell command -v wails 2>/dev/null || echo $(GOBIN)/wails)
-WAILS_VER ?= v2.15.0
+WAILS_VER ?= v2.16.0
 UNAME_S   := $(shell uname -s)
 
 # Modern Debian/Ubuntu only ship webkit2gtk-4.1; Wails links against 4.0
@@ -116,6 +118,12 @@ check:
 
 # --- shared: copy the wails output to ./bin/install -------------------------
 
+# On Linux a .desktop entry is written next to the binary. The binary itself
+# is a plain GUI program that never needs a terminal, but file managers and
+# launchers only know that from a desktop entry (Terminal=false); opened any
+# other way some of them wrap an unknown executable in a terminal window.
+DESKTOP := bin/$(APP).desktop
+
 .PHONY: install-bin
 install-bin:
 	mkdir -p bin
@@ -127,4 +135,20 @@ else
 	cp $(SRC)/build/bin/$(BIN) $(OUT)
 endif
 	chmod +x $(OUT)
+ifeq ($(UNAME_S),Linux)
+	printf '[Desktop Entry]\nType=Application\nName=Symphony\nComment=Orchestration vs. choreography fault-injection benchmark\nExec=%s\nIcon=%s\nTerminal=false\nCategories=Development;\nStartupWMClass=$(APP)\n' \
+	  "$(CURDIR)/$(OUT)" "$(CURDIR)/$(SRC)/build/appicon.png" > $(DESKTOP)
+	chmod +x $(DESKTOP)
+endif
 	@echo "built $(OUT)"
+
+# Registers the launcher for the current user (GNOME, KDE, XFCE all read
+# ~/.local/share/applications). Run again after moving the repository.
+desktop: $(DESKTOP)
+	mkdir -p $(HOME)/.local/share/applications
+	cp $(DESKTOP) $(HOME)/.local/share/applications/$(APP).desktop
+	-update-desktop-database $(HOME)/.local/share/applications 2>/dev/null
+	@echo "installed $(HOME)/.local/share/applications/$(APP).desktop"
+
+$(DESKTOP):
+	$(MAKE) --no-print-directory install-bin

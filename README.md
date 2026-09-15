@@ -20,6 +20,7 @@ The default build runs inside a Docker container, so the host needs only
 | `make run`          | build, then launch `./bin/install`                            |
 | `make clean`        | remove `bin/`, `src/build/bin/`, `src/client/dist/`           |
 | `make clean-docker` | `clean` plus remove the image and cache volumes               |
+| `make desktop`      | register `bin/symphony.desktop` with the desktop (Linux)      |
 
 **What the container can target.** The output is a native binary for the
 platform in `PLATFORM` (default `linux/amd64`). It is linked against
@@ -29,9 +30,16 @@ Linux desktop with `libgtk-3-0` and `libwebkit2gtk-4.1-0` installed.
 (`bin/install.exe`) from the same container. macOS cannot be cross-compiled
 without Apple's SDK; build natively on a Mac with `make build-local`.
 
+**Launching without a terminal.** `bin/install` is a plain GUI binary and
+never needs a console. On Linux the build also writes `bin/symphony.desktop`
+(`Terminal=false`); `make desktop` copies it to
+`~/.local/share/applications`, after which Symphony appears in the app grid
+and file managers open the binary as an application rather than wrapping an
+unknown executable in a terminal window.
+
 ### Native build (optional)
 
-If you would rather not use Docker, install Go 1.25+, Node 20+, and the Wails
+If you would rather not use Docker, install Go 1.27+, Node 22+, and the Wails
 platform dependencies. On Debian/Ubuntu:
 
     sudo apt install gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
@@ -57,7 +65,10 @@ next to the copied `.app` bundle.
 | Hot config transport | `control` ops and `SetHotConfig` update the engine's copy and log. | `core.Engine.executeOp` case `OpControl` and `core.Engine.SetHotConfig`: HTTP admin endpoint / SIGHUP / toxiproxy API. |
 | Faults | `pause` and `kill` go through the runtime; `latency`, `drop`, `partition`, `cpu_stress` are recorded and logged only. | `core.Engine.InjectFault`: toxiproxy toxics, netem, stress-ng exec. |
 | Metrics | `src/engine/metrics` random-walks around a baseline that reacts to node health and active faults. | Replace `Ticker.sample` with real collectors; keep `events.MetricsPayload`. |
+| Link health | The map colours every edge of a running topology from a per-edge error rate (`link:health`, every 500 ms): green below 5 % lost requests, yellow from 5 %, red from 25 % (`metrics.WarnThreshold` / `CritThreshold`). Today the rate is derived from the endpoint nodes' state and active faults. | Replace `Ticker.errorRate` with proxy / consumer counters; keep `events.LinkHealthPayload`. |
+| Host stats | Real: `src/engine/hoststats` samples the machine's CPU, RAM and network throughput once a second with gopsutil and feeds the Stats tab. | — |
+| Deployments | Real, in memory: every applied topology is a deployment keyed by its name with its own network (`symphony-<slug>`), container names (`<slug>-<node>`), statuses and faults, so several templates run side by side and each is applied, tuned and torn down on its own. | `runtime.DockerRuntime` gives each deployment real containers on its own network. |
 | Persistence | Real for templates: `engine/library` keeps the ones the user builds in `<user config dir>/symphony/templates.json`, mirrored into the webview's `localStorage` as a fallback. Built-in templates stay Go literals in `src/engine/spec/presets.go`. | The applied topology and run history are still not saved; `spec.Encode/Decode` and `library.Library` are what to build that on. |
-| Edge editing | Edges are created by connecting handles; kind is inferred, topic defaults to `<node>.events`. | Inspector panel for edges. |
+| Edge editing | Edges are created by connecting handles; kind is inferred, topic defaults to `<node>.events`. A proxy node can sit in any path (`service -> proxy -> service`, `broker -> proxy -> service`); messaging edges through it are resolved to the broker behind it. | Inspector panel for edges. |
 
 Not in scope here by design: tests, Docker calls, packaging beyond `make build`.

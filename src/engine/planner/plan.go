@@ -61,9 +61,11 @@ type Plan struct {
 	Network string      `json:"network"`
 }
 
-// NetworkName derives the container network for a topology.
+// NetworkName derives the container network for a topology. Each applied
+// topology gets its own network, so several can run side by side without
+// their containers seeing each other.
 func NetworkName(t spec.Topology) string {
-	return "symphony"
+	return "symphony-" + spec.Slug(t.Name)
 }
 
 type builder struct {

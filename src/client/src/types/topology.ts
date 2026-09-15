@@ -66,6 +66,15 @@ export interface NodeStatus {
 
 export type Phase = 'idle' | 'validating' | 'planning' | 'applying' | 'running' | 'tearing_down' | 'failed'
 
+/** Mirrors core.DeploymentInfo: one applied topology, keyed by its name. */
+export interface DeploymentInfo {
+  name: string
+  phase: Phase
+  network: string
+  topology: Topology
+  statuses: Record<string, NodeStatus>
+}
+
 // --- planner ---------------------------------------------------------------
 
 export type OpKind = 'ensure_network' | 'create' | 'wait_healthy' | 'ensure_topic' | 'control' | 'destroy'
@@ -88,6 +97,7 @@ export interface FaultSpec {
 // --- event payloads (mirror internal/events) --------------------------------
 
 export interface ProgressEvent {
+  deployment: string
   op_id: string
   index: number
   count: number
@@ -106,9 +116,39 @@ export interface LogEvent {
   ts: number
 }
 
+/** `gone` is only ever received: the deployment was torn down. */
 export interface PhaseEvent {
-  phase: Phase
+  deployment: string
+  phase: Phase | 'gone'
   message?: string
+}
+
+/** Payload of `node:status`: a NodeStatus tagged with its deployment. */
+export interface NodeStatusEvent extends NodeStatus {
+  deployment: string
+}
+
+export type LinkLevel = 'ok' | 'warn' | 'crit'
+
+export interface LinkHealthEntry {
+  error_rate: number
+  level: LinkLevel
+}
+
+export interface LinkHealthEvent {
+  deployment: string
+  ts: number
+  links: Record<string, LinkHealthEntry>
+}
+
+export interface HostStatsEvent {
+  ts: number
+  cpu_pct: number
+  mem_pct: number
+  mem_used_bytes: number
+  mem_total_bytes: number
+  net_rx_bps: number
+  net_tx_bps: number
 }
 
 export interface MetricsEvent {
@@ -122,6 +162,7 @@ export interface MetricsEvent {
 }
 
 export interface FaultEvent {
+  deployment: string
   node_id: string
   kind: FaultKind
   duration_ms: number
@@ -136,7 +177,7 @@ export function toWireTopology(t: Topology): spec.Topology {
 }
 
 /** Strip class instances coming back from the binding into plain data. */
-export function fromWireTopology(t: spec.Topology): Topology {
+export function fromWireTopology(t: spec.Topology | Topology): Topology {
   const plain = JSON.parse(JSON.stringify(t)) as Topology
   plain.nodes = plain.nodes ?? []
   plain.edges = plain.edges ?? []

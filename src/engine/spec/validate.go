@@ -123,17 +123,19 @@ func (t Topology) Validate() []ValidationError {
 		if !okFrom || !okTo || !e.Kind.Valid() {
 			continue
 		}
+		// A proxy may stand in for either end of any edge: traffic is routed
+		// through it to whatever sits behind it.
 		switch e.Kind {
 		case EdgePublishes:
-			if to.Kind != KindBroker {
-				add(p+".to", to.ID, e.ID, "publishes edges must point at a broker")
+			if to.Kind != KindBroker && to.Kind != KindProxy {
+				add(p+".to", to.ID, e.ID, "publishes edges must point at a broker (or a proxy in front of one)")
 			}
 			if e.Topic == "" {
 				add(p+".topic", "", e.ID, "publishes edges require a topic")
 			}
 		case EdgeSubscribes:
-			if from.Kind != KindBroker {
-				add(p+".from", from.ID, e.ID, "subscribes edges must originate at a broker")
+			if from.Kind != KindBroker && from.Kind != KindProxy {
+				add(p+".from", from.ID, e.ID, "subscribes edges must originate at a broker (or a proxy in front of one)")
 			}
 			if e.Topic == "" {
 				add(p+".topic", "", e.ID, "subscribes edges require a topic")
@@ -146,22 +148,32 @@ func (t Topology) Validate() []ValidationError {
 				warn(p+".topic", "", e.ID, "topic is ignored on calls edges")
 			}
 		case EdgeUses:
-			if to.Kind != KindDB && to.Kind != KindBroker {
-				add(p+".to", to.ID, e.ID, "uses edges must target a db or broker")
+			if to.Kind != KindDB && to.Kind != KindBroker && to.Kind != KindProxy {
+				add(p+".to", to.ID, e.ID, "uses edges must target a db or broker (or a proxy in front of one)")
+			}
+		}
+		if e.Kind.Messaging() && e.Topic != "" {
+			if _, ok := t.BrokerBehind(e); !ok {
+				add(p, "", e.ID, fmt.Sprintf("topic %q is routed through a proxy that is not connected to a broker for it", e.Topic))
 			}
 		}
 	}
 
 	// Every declared topic should have both a producer and a consumer,
-	// otherwise the saga can never complete.
+	// otherwise the saga can never complete. Edges are attributed to the
+	// broker behind any proxy hops.
 	producers := map[string]bool{}
 	consumers := map[string]bool{}
 	for _, e := range t.Edges {
+		broker, ok := t.BrokerBehind(e)
+		if !ok {
+			continue
+		}
 		switch e.Kind {
 		case EdgePublishes:
-			producers[e.To+"/"+e.Topic] = true
+			producers[broker+"/"+e.Topic] = true
 		case EdgeSubscribes:
-			consumers[e.From+"/"+e.Topic] = true
+			consumers[broker+"/"+e.Topic] = true
 		}
 	}
 	for k := range producers {

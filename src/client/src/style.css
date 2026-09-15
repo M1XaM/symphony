@@ -130,9 +130,8 @@ button {
 }
 
 .panel-bottom {
-  grid-column: 2;
+  grid-column: 1 / -1;
   grid-row: 3;
-  align-self: end;
 }
 
 .panel-head {
@@ -402,7 +401,6 @@ input[type='checkbox'] {
 .left-foot {
   flex-shrink: 0;
   padding: 8px;
-  border-top: 1px solid var(--line);
 }
 
 .left-foot-split {
@@ -437,8 +435,7 @@ input[type='checkbox'] {
 
 .seg-wrap {
   flex-shrink: 0;
-  padding: 8px;
-  border-bottom: 1px solid var(--line);
+  padding: 8px 8px 4px;
 }
 
 .seg {
@@ -761,13 +758,32 @@ input[type='checkbox'] {
   font-size: 10.5px;
 }
 
-.react-flow__edge.tedge-publishes path.react-flow__edge-path,
-.react-flow__edge.tedge-subscribes path.react-flow__edge-path {
-  stroke: #6f5f92;
+/* every edge is grey until its topology runs; then the link's error rate
+   picks green / yellow / red (thresholds in engine/metrics) */
+.react-flow__edge.tedge path.react-flow__edge-path {
+  stroke: var(--grey);
+  transition: stroke 300ms ease;
 }
 
-.react-flow__edge.tedge-uses path.react-flow__edge-path {
-  stroke: #4c7a6c;
+.react-flow__edge.tedge-ok path.react-flow__edge-path {
+  stroke: var(--ok);
+}
+
+.react-flow__edge.tedge-warn path.react-flow__edge-path {
+  stroke: var(--warn);
+}
+
+.react-flow__edge.tedge-crit path.react-flow__edge-path {
+  stroke: var(--err);
+  stroke-width: 2;
+}
+
+.react-flow__edge.tedge-warn .react-flow__edge-text {
+  fill: var(--warn);
+}
+
+.react-flow__edge.tedge-crit .react-flow__edge-text {
+  fill: var(--err);
 }
 
 .react-flow__edge.tedge-via path.react-flow__edge-path {
@@ -1090,11 +1106,6 @@ input[type='checkbox'] {
   padding-bottom: 10px;
 }
 
-.inspector-chart {
-  border-top: 1px solid var(--line);
-  padding-bottom: 8px;
-}
-
 .kind-chip {
   padding: 1px 6px;
   border-radius: 2px;
@@ -1197,9 +1208,47 @@ input[type='checkbox'] {
   padding: 0 10px;
 }
 
+/* stats tab: one chart per host resource */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 4px 10px 8px;
+}
+
+@media (max-width: 900px) {
+  .stats {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* chart */
 .chart {
+  --series: var(--accent);
   padding: 0 10px;
+  min-width: 0;
+}
+
+.chart .series-1 {
+  --series: #4f8cff;
+}
+
+.chart .series-2 {
+  --series: #cc7f2b;
+}
+
+.chart-series {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 10px;
+}
+
+.chart-swatch {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--series);
 }
 
 .chart-head {
@@ -1238,14 +1287,14 @@ input[type='checkbox'] {
 
 .chart-line {
   fill: none;
-  stroke: var(--accent);
+  stroke: var(--series);
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
 
 .chart-area {
-  fill: var(--accent);
+  fill: var(--series);
   opacity: 0.08;
 }
 
@@ -1257,7 +1306,7 @@ input[type='checkbox'] {
 
 .chart-marker {
   fill: var(--bg-2);
-  stroke: var(--accent);
+  stroke: var(--series);
   stroke-width: 2;
 }
 

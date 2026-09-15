@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react'
 import type { ConfigValue } from '../types/topology'
 
 interface Bounds {
@@ -28,7 +29,7 @@ interface Props {
 /** Renders one config entry. Hot numbers get a live slider; cold ones a plain input. */
 export function ConfigField({ name, value, mode, onChange }: Props) {
   const hot = mode === 'hot'
-  let control: JSX.Element
+  let control: ReactElement
 
   if (typeof value === 'boolean') {
     control = <input type="checkbox" checked={value} onChange={(e) => onChange(e.target.checked)} />

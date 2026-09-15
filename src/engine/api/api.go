@@ -11,6 +11,7 @@ import (
 
 	"symphony/engine/core"
 	"symphony/engine/events"
+	"symphony/engine/hoststats"
 	"symphony/engine/library"
 	"symphony/engine/planner"
 	"symphony/engine/spec"
@@ -21,12 +22,13 @@ type API struct {
 	eng   *core.Engine
 	bus   *events.Bus
 	lib   *library.Library
+	host  *hoststats.Sampler
 	ctx   context.Context
 	unsub func()
 }
 
-func New(eng *core.Engine, bus *events.Bus, lib *library.Library) *API {
-	return &API{eng: eng, bus: bus, lib: lib}
+func New(eng *core.Engine, bus *events.Bus, lib *library.Library, host *hoststats.Sampler) *API {
+	return &API{eng: eng, bus: bus, lib: lib, host: host}
 }
 
 // Startup wires the event bus to Wails. It is a package function rather
@@ -53,9 +55,14 @@ func (a *API) context() context.Context {
 	return a.ctx
 }
 
-// GetTopology returns the topology that is currently applied (running).
-func (a *API) GetTopology() spec.Topology {
-	return a.eng.Current()
+// GetDeployments returns every topology that is currently applied, with its
+// phase and per-node status, so the webview can pick up where the engine is.
+func (a *API) GetDeployments() []core.DeploymentInfo {
+	out := a.eng.Deployments()
+	if out == nil {
+		out = []core.DeploymentInfo{}
+	}
+	return out
 }
 
 // GetPresets returns the seeded example topologies.
@@ -92,9 +99,10 @@ func (a *API) GetLogHistory() []events.LogPayload {
 	return a.bus.LogHistory()
 }
 
-// GetPhase returns the engine phase for the toolbar pill.
-func (a *API) GetPhase() string {
-	return string(a.eng.Phase())
+// GetHostStats returns the host usage samples taken so far, oldest first, so
+// the Stats tab has a graph as soon as it opens.
+func (a *API) GetHostStats() []events.HostStatsPayload {
+	return a.host.History()
 }
 
 // ValidateTopology returns all validation findings (errors and warnings).
@@ -128,28 +136,23 @@ func (a *API) PlanApply(t spec.Topology) (planner.Plan, error) {
 	return plan, nil
 }
 
-// Apply executes the plan, emitting apply:progress events; it returns when
-// the plan finishes or fails.
+// Apply executes the plan for the topology named in t, next to whatever
+// else is running; it returns when the plan finishes or fails.
 func (a *API) Apply(t spec.Topology) error {
 	return a.eng.Apply(a.context(), t)
 }
 
-// Teardown destroys everything that is running.
-func (a *API) Teardown() error {
-	return a.eng.Teardown(a.context())
+// Teardown destroys everything running under the named topology.
+func (a *API) Teardown(name string) error {
+	return a.eng.Teardown(a.context(), name)
 }
 
 // SetHotConfig pushes a hot-config patch to a running node immediately.
-func (a *API) SetHotConfig(nodeID string, patch map[string]any) error {
-	return a.eng.SetHotConfig(a.context(), nodeID, patch)
+func (a *API) SetHotConfig(deployment, nodeID string, patch map[string]any) error {
+	return a.eng.SetHotConfig(a.context(), deployment, nodeID, patch)
 }
 
 // InjectFault injects a fault into a running node.
-func (a *API) InjectFault(nodeID string, fault spec.FaultSpec) error {
-	return a.eng.InjectFault(a.context(), nodeID, fault)
-}
-
-// GetNodeStatus returns the current status of every running node.
-func (a *API) GetNodeStatus() map[string]core.NodeStatus {
-	return a.eng.NodeStatuses()
+func (a *API) InjectFault(deployment, nodeID string, fault spec.FaultSpec) error {
+	return a.eng.InjectFault(a.context(), deployment, nodeID, fault)
 }
