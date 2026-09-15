@@ -1,0 +1,142 @@
+{
+  "id": "t17-chaos-soak",
+  "name": "Chaos soak",
+  "description": "Steady load with a different fault every interval_s: latency, drop, kill, pause, pool shrink, cpu burn.",
+  "reveals": "The aggregate resilience score: availability, worst p99 and recovery after each kind of fault.",
+  "tags": [
+    "resilience"
+  ],
+  "requires": {
+    "kinds": [
+      "infra",
+      "service"
+    ]
+  },
+  "params": {
+    "rps": 30,
+    "concurrency": 64,
+    "interval_s": 20,
+    "duration_s": 180
+  },
+  "timeline": [
+    {
+      "at_s": 0,
+      "do": "load.set",
+      "args": {
+        "rps": "{rps}",
+        "concurrency": "{concurrency}"
+      }
+    },
+    {
+      "at_s": 10,
+      "do": "phase",
+      "phase": "steady"
+    },
+    {
+      "at_s": 20,
+      "do": "phase",
+      "phase": "fault"
+    },
+    {
+      "at_s": 20,
+      "do": "fault.set",
+      "edge": "proxied",
+      "args": {
+        "kind": "latency",
+        "ms": 250,
+        "duration_s": 10
+      }
+    },
+    {
+      "at_s": 40,
+      "do": "fault.set",
+      "edge": "proxied",
+      "args": {
+        "kind": "drop",
+        "rate": 0.5,
+        "duration_s": 10
+      }
+    },
+    {
+      "at_s": 60,
+      "do": "restart",
+      "kind": "participant",
+      "args": {
+        "after_s": 5
+      }
+    },
+    {
+      "at_s": 80,
+      "do": "fault.set",
+      "kind": "central",
+      "args": {
+        "kind": "pause",
+        "duration_s": 8
+      }
+    },
+    {
+      "at_s": 100,
+      "do": "fault.set",
+      "kind": "participant",
+      "args": {
+        "kind": "cpu_stress",
+        "cores": 2,
+        "duration_s": 10
+      }
+    },
+    {
+      "at_s": 120,
+      "do": "fault.set",
+      "kind": "participant",
+      "args": {
+        "kind": "error",
+        "rate": 0.4,
+        "duration_s": 10
+      }
+    },
+    {
+      "at_s": 140,
+      "do": "fault.set",
+      "kind": "participant",
+      "args": {
+        "kind": "stall",
+        "duration_s": 6
+      }
+    },
+    {
+      "at_s": 150,
+      "do": "phase",
+      "phase": "recovery"
+    },
+    {
+      "at_s": "{duration_s}",
+      "do": "load.stop"
+    },
+    {
+      "at_s": "{duration_s}",
+      "do": "end"
+    }
+  ],
+  "collect": [
+    "sagas_per_sec",
+    "latency_p50_ms",
+    "latency_p99_ms",
+    "error_rate",
+    "consumer_lag",
+    "cpu_pct",
+    "sagas_ok_total",
+    "sagas_failed_total",
+    "nodes_healthy",
+    "link.error_rate[*]",
+    "container.cpu[*]",
+    "container.mem_mb[*]"
+  ],
+  "assert": [
+    {
+      "metric": "availability",
+      "op": ">=",
+      "value": 0.8,
+      "note": "at least 80% of sagas succeed over the soak"
+    }
+  ]
+}

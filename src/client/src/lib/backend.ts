@@ -1,16 +1,27 @@
 // Thin wrapper over the generated Wails bindings so components never import
 // wailsjs directly and the class<->interface conversion happens in one place.
 import * as API from '../../wailsjs/go/api/API'
+import { control, spec } from '../../wailsjs/go/models'
 import {
   fromWireTopology,
   toWireFault,
   toWireTopology,
+  type ControlCommand,
+  type ControlResult,
   type DeploymentInfo,
   type FaultSpec,
   type HostStatsEvent,
   type LogEvent,
+  type LogLine,
+  type MetricsEvent,
   type Plan,
+  type Resources,
+  type Run,
+  type RunSummary,
+  type RuntimeInfo,
+  type Scenario,
   type Topology,
+  type TopologyNode,
   type ValidationError,
 } from '../types/topology'
 
@@ -27,6 +38,13 @@ export function hasBackend(): boolean {
 }
 
 export const backend = {
+  getRuntimeInfo(): Promise<RuntimeInfo> {
+    return API.GetRuntimeInfo() as unknown as Promise<RuntimeInfo>
+  },
+  async newNode(id: string, kind: string, pos: { x: number; y: number }): Promise<TopologyNode> {
+    const n = await API.NewNode(id, kind, spec.Position.createFrom(pos))
+    return JSON.parse(JSON.stringify(n)) as TopologyNode
+  },
   async getDeployments(): Promise<DeploymentInfo[]> {
     const list = (await API.GetDeployments()) as unknown as DeploymentInfo[]
     return list.map((d) => ({
@@ -78,6 +96,44 @@ export const backend = {
   },
   getHostStats(): Promise<HostStatsEvent[]> {
     return API.GetHostStats() as unknown as Promise<HostStatsEvent[]>
+  },
+  setResources(deployment: string, nodeId: string, r: Resources): Promise<void> {
+    return API.SetResources(deployment, nodeId, spec.Resources.createFrom(r))
+  },
+  clearFaults(deployment: string, nodeId: string): Promise<void> {
+    return API.ClearFaults(deployment, nodeId)
+  },
+  async control(deployment: string, nodeId: string, cmd: ControlCommand): Promise<ControlResult> {
+    const res = await API.ControlNode(deployment, nodeId, control.Command.createFrom(cmd))
+    return JSON.parse(JSON.stringify(res)) as ControlResult
+  },
+  async getNodeLogs(deployment: string, nodeId: string, n: number): Promise<LogLine[]> {
+    const lines = await API.GetNodeLogs(deployment, nodeId, n)
+    return JSON.parse(JSON.stringify(lines)) as LogLine[]
+  },
+  getMetrics(deployment: string): Promise<MetricsEvent> {
+    return API.GetMetrics(deployment) as unknown as Promise<MetricsEvent>
+  },
+  async listScenarios(): Promise<Scenario[]> {
+    return JSON.parse(JSON.stringify(await API.ListScenarios())) as Scenario[]
+  },
+  startTest(scenario: string, t: Topology, params: Record<string, unknown>): Promise<string> {
+    return API.StartTest(scenario, toWireTopology(t), params)
+  },
+  abortTest(runId: string): Promise<void> {
+    return API.AbortTest(runId)
+  },
+  async listRuns(): Promise<RunSummary[]> {
+    return JSON.parse(JSON.stringify(await API.ListRuns())) as RunSummary[]
+  },
+  async getRun(runId: string): Promise<Run> {
+    return JSON.parse(JSON.stringify(await API.GetRun(runId))) as Run
+  },
+  deleteRun(runId: string): Promise<void> {
+    return API.DeleteRun(runId)
+  },
+  exportRun(runId: string): Promise<string> {
+    return API.ExportRun(runId)
   },
 }
 

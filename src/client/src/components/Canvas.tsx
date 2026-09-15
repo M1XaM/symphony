@@ -61,6 +61,8 @@ export function Canvas() {
   const links = useSymphonyStore(selectLinks)
   const applied = useSymphonyStore(selectIsApplied)
   const selectedNodeId = useSymphonyStore((s) => s.selectedNodeId)
+  const selectedEdgeId = useSymphonyStore((s) => s.selectedEdgeId)
+  const selectEdge = useSymphonyStore((s) => s.selectEdge)
   const loadSeq = useSymphonyStore((s) => s.loadSeq)
   const moveNode = useSymphonyStore((s) => s.moveNode)
   const removeNodes = useSymphonyStore((s) => s.removeNodes)
@@ -99,12 +101,13 @@ export function Canvas() {
           target: e.to,
           type: 'smoothstep',
           label,
-          className: `tedge tedge-${e.kind} tedge-${level}${e.via ? ' tedge-via' : ''}`,
+          selected: e.id === selectedEdgeId,
+          className: `tedge tedge-${e.kind} tedge-${level}${e.via ? ' tedge-via' : ''}${health && health.rps ? ' tedge-live' : ''}`,
           markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: MARKER_COLOR[level] },
           data: { kind: e.kind, via: e.via, level },
         }
       }),
-    [topology.edges, links, applied],
+    [topology.edges, links, applied, selectedEdgeId],
   )
 
   /** Fit the graph into the band the floating panels leave clear. Used on load
@@ -173,10 +176,17 @@ export function Canvas() {
 
   const onEdgesChange = useCallback(
     (changes: EdgeChange<Edge>[]) => {
-      const removed = changes.filter((c) => c.type === 'remove').map((c) => c.id)
+      const removed: string[] = []
+      for (const c of changes) {
+        if (c.type === 'remove') removed.push(c.id)
+        else if (c.type === 'select') {
+          if (c.selected) selectEdge(c.id)
+          else if (useSymphonyStore.getState().selectedEdgeId === c.id) selectEdge(null)
+        }
+      }
       if (removed.length) removeEdges(removed)
     },
-    [removeEdges],
+    [removeEdges, selectEdge],
   )
 
   const onConnect = useCallback(
@@ -210,7 +220,10 @@ export function Canvas() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
-        onPaneClick={() => select(null)}
+        onPaneClick={() => {
+          select(null)
+          selectEdge(null)
+        }}
         deleteKeyCode={['Backspace', 'Delete']}
         colorMode="dark"
         minZoom={MIN_ZOOM}

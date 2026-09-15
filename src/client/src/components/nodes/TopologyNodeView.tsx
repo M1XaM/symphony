@@ -10,6 +10,7 @@ export type RFNode = Node<RFNodeData, NodeKind>
 export function TopologyNodeView({ data, selected }: NodeProps<RFNode>) {
   const { node, status } = data
   const replicaText = status ? `${status.ready}/${status.replicas} ready` : `×${node.replicas}`
+  const limits = [node.resources?.cpus ? `${node.resources.cpus} cpu` : '', node.resources?.memory_mb ? `${node.resources.memory_mb} MB` : ''].filter(Boolean).join(' · ')
   return (
     <div className={`tnode tnode-${node.kind}${selected ? ' is-selected' : ''}`}>
       <Handle type="target" position={Position.Left} className="tnode-handle" />
@@ -24,6 +25,7 @@ export function TopologyNodeView({ data, selected }: NodeProps<RFNode>) {
         </div>
         <div className="tnode-meta tnode-replicas">
           {replicaText}
+          {limits ? <span className="muted"> · {limits}</span> : null}
           {status?.message ? <span className="tnode-msg"> · {status.message}</span> : null}
         </div>
       </div>

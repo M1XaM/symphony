@@ -4,6 +4,7 @@
 package planner
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 
@@ -14,12 +15,15 @@ import (
 type OpKind string
 
 const (
-	OpEnsureNetwork OpKind = "ensure_network"
-	OpCreate        OpKind = "create"
-	OpWaitHealthy   OpKind = "wait_healthy"
-	OpEnsureTopic   OpKind = "ensure_topic"
-	OpControl       OpKind = "control" // push hot config to a running node
-	OpDestroy       OpKind = "destroy"
+	OpEnsureImage     OpKind = "ensure_image" // pull or build a block image
+	OpEnsureNetwork   OpKind = "ensure_network"
+	OpCreate          OpKind = "create"
+	OpWaitHealthy     OpKind = "wait_healthy"
+	OpEnsureTopic     OpKind = "ensure_topic"
+	OpControl         OpKind = "control"          // push hot config to a running node
+	OpConfigure       OpKind = "configure"        // push a behaviour program to a running node
+	OpUpdateResources OpKind = "update_resources" // change CPU/RAM limits in place
+	OpDestroy         OpKind = "destroy"
 )
 
 // ChangeClass explains why an operation is in the plan and how disruptive
@@ -95,7 +99,7 @@ func (b *builder) add(kind OpKind, target string, class ChangeClass, reason stri
 		b.plan.Summary.Creates++
 	case OpDestroy:
 		b.plan.Summary.Destroys++
-	case OpControl:
+	case OpControl, OpConfigure, OpUpdateResources:
 		b.plan.Summary.Controls++
 	}
 }
@@ -122,6 +126,7 @@ func Diff(current, desired spec.Topology) Plan {
 
 	cur := indexNodes(current)
 	des := indexNodes(desired)
+	slug := spec.Slug(desired.Name)
 
 	type recreateItem struct {
 		node   spec.Node
@@ -146,6 +151,10 @@ func Diff(current, desired spec.Topology) Plan {
 			recreate = append(recreate, recreateItem{node: n, reason: reason})
 			continue
 		}
+		if LinkSignature(current, n.ID, slug) != LinkSignature(desired, n.ID, slug) {
+			recreate = append(recreate, recreateItem{node: n, reason: "links changed"})
+			continue
+		}
 		if patch := hotDiff(old, n); len(patch) > 0 {
 			controls = append(controls, Operation{
 				Kind:   OpControl,
@@ -155,6 +164,28 @@ func Diff(current, desired spec.Topology) Plan {
 				Params: patch,
 			})
 		}
+		if old.Resources != n.Resources {
+			controls = append(controls, Operation{
+				Kind:   OpUpdateResources,
+				Target: n.ID,
+				Class:  ClassHot,
+				Reason: fmt.Sprintf("resources cpus=%g memory_mb=%d pids_max=%d", n.Resources.CPUs, n.Resources.MemoryMB, n.Resources.PidsMax),
+				Params: map[string]any{"cpus": n.Resources.CPUs, "memory_mb": n.Resources.MemoryMB, "pids_max": n.Resources.PidsMax},
+			})
+		}
+		if string(old.Behaviour) != string(n.Behaviour) {
+			var prog any
+			if len(n.Behaviour) > 0 {
+				prog = json.RawMessage(n.Behaviour)
+			}
+			controls = append(controls, Operation{
+				Kind:   OpConfigure,
+				Target: n.ID,
+				Class:  ClassHot,
+				Reason: "behaviour program changed",
+				Params: map[string]any{"behaviour": prog},
+			})
+		}
 	}
 
 	sortNodes(removed)
@@ -162,10 +193,28 @@ func Diff(current, desired spec.Topology) Plan {
 	sort.SliceStable(recreate, func(i, j int) bool {
 		return lessNode(recreate[i].node, recreate[j].node)
 	})
-	sort.Slice(controls, func(i, j int) bool { return controls[i].Target < controls[j].Target })
+	sort.SliceStable(controls, func(i, j int) bool { return controls[i].Target < controls[j].Target })
 
-	// 1. Network exists before anything is created.
+	// 1. Images and the network exist before anything is created.
 	if len(added)+len(recreate) > 0 {
+		seen := map[string]bool{}
+		var images []string
+		for _, n := range added {
+			if !seen[n.Image] {
+				seen[n.Image] = true
+				images = append(images, n.Image)
+			}
+		}
+		for _, r := range recreate {
+			if !seen[r.node.Image] {
+				seen[r.node.Image] = true
+				images = append(images, r.node.Image)
+			}
+		}
+		sort.Strings(images)
+		for _, img := range images {
+			b.add(OpEnsureImage, img, ClassStructural, "block image present locally", nil)
+		}
 		b.add(OpEnsureNetwork, b.plan.Network, ClassStructural, "container network for the topology", nil)
 	}
 

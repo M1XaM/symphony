@@ -1,0 +1,109 @@
+{
+  "id": "t11-oom",
+  "name": "Memory limit and OOM",
+  "description": "Set a low memory limit on a participant, then make it allocate until the kernel kills it; it is restarted after restart_delay_s.",
+  "reveals": "A crash the process cannot handle; restart behaviour of each style.",
+  "tags": [
+    "resources"
+  ],
+  "requires": {
+    "kinds": [
+      "infra",
+      "service"
+    ]
+  },
+  "params": {
+    "rps": 30,
+    "concurrency": 64,
+    "memory_mb": 64,
+    "alloc_mb": 256,
+    "restart_delay_s": 5,
+    "duration_s": 60
+  },
+  "timeline": [
+    {
+      "at_s": 0,
+      "do": "load.set",
+      "args": {
+        "rps": "{rps}",
+        "concurrency": "{concurrency}"
+      }
+    },
+    {
+      "at_s": 10,
+      "do": "phase",
+      "phase": "steady"
+    },
+    {
+      "at_s": 20,
+      "do": "phase",
+      "phase": "pressure"
+    },
+    {
+      "at_s": 20,
+      "do": "resources.set",
+      "kind": "participant",
+      "args": {
+        "memory_mb": "{memory_mb}"
+      }
+    },
+    {
+      "at_s": 21,
+      "do": "fault.set",
+      "kind": "participant",
+      "args": {
+        "kind": "memory_pressure",
+        "mb": "{alloc_mb}",
+        "duration_s": 30
+      }
+    },
+    {
+      "at_s": 26,
+      "do": "restart",
+      "kind": "participant",
+      "args": {
+        "after_s": "{restart_delay_s}"
+      }
+    },
+    {
+      "at_s": 32,
+      "do": "phase",
+      "phase": "recovery"
+    },
+    {
+      "at_s": 32,
+      "do": "resources.set",
+      "kind": "participant",
+      "args": {}
+    },
+    {
+      "at_s": "{duration_s}",
+      "do": "load.stop"
+    },
+    {
+      "at_s": "{duration_s}",
+      "do": "end"
+    }
+  ],
+  "collect": [
+    "sagas_per_sec",
+    "latency_p50_ms",
+    "latency_p99_ms",
+    "error_rate",
+    "consumer_lag",
+    "cpu_pct",
+    "sagas_ok_total",
+    "sagas_failed_total",
+    "nodes_healthy",
+    "link.error_rate[*]",
+    "container.cpu[*]",
+    "container.mem_mb[*]"
+  ],
+  "assert": [
+    {
+      "metric": "recovery_time_s",
+      "op": "<=",
+      "value": 30
+    }
+  ]
+}

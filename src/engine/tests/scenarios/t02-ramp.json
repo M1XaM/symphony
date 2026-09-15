@@ -1,0 +1,70 @@
+{
+  "id": "t02-ramp",
+  "name": "Ramp to saturation",
+  "description": "Load ramps from a few rps to max_rps; the knee where latency departs from linear and errors start is the capacity.",
+  "reveals": "The capacity of each style with equal resources, and which component saturates first.",
+  "tags": [
+    "capacity"
+  ],
+  "requires": {
+    "kinds": [
+      "infra",
+      "service"
+    ]
+  },
+  "params": {
+    "rps": 5,
+    "max_rps": 400,
+    "concurrency": 128,
+    "duration_s": 90,
+    "ramp_ms": 90000
+  },
+  "timeline": [
+    {
+      "at_s": 0,
+      "do": "load.set",
+      "args": {
+        "pattern": "ramp",
+        "rps": "{rps}",
+        "to_rps": "{max_rps}",
+        "duration_ms": "{ramp_ms}",
+        "concurrency": "{concurrency}"
+      }
+    },
+    {
+      "at_s": 0,
+      "do": "phase",
+      "phase": "ramp"
+    },
+    {
+      "at_s": "{duration_s}",
+      "do": "load.stop"
+    },
+    {
+      "at_s": "{duration_s}",
+      "do": "end"
+    }
+  ],
+  "collect": [
+    "sagas_per_sec",
+    "latency_p50_ms",
+    "latency_p99_ms",
+    "error_rate",
+    "consumer_lag",
+    "cpu_pct",
+    "sagas_ok_total",
+    "sagas_failed_total",
+    "nodes_healthy",
+    "link.error_rate[*]",
+    "container.cpu[*]",
+    "container.mem_mb[*]"
+  ],
+  "assert": [
+    {
+      "metric": "sagas_per_sec.max",
+      "op": ">=",
+      "value": 50,
+      "note": "reached at least 50 sagas/s before saturating"
+    }
+  ]
+}

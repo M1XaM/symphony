@@ -13,14 +13,17 @@ import (
 type Type string
 
 const (
-	ApplyProgress Type = "apply:progress" // ProgressPayload, one per operation state change
-	EngineLog     Type = "engine:log"     // LogPayload, human-readable log line
-	EnginePhase   Type = "engine:phase"   // PhasePayload, engine state machine transitions
-	NodeStatus    Type = "node:status"    // NodeStatusPayload, per-node runtime state
-	MetricsTick   Type = "metrics:tick"   // MetricsPayload, emitted every 500ms
-	LinkHealth    Type = "link:health"    // LinkHealthPayload, one per deployment every 500ms
-	HostStats     Type = "host:stats"     // HostStatsPayload, host machine usage every second
-	FaultInjected Type = "fault:injected" // FaultPayload
+	ApplyProgress  Type = "apply:progress"  // ProgressPayload, one per operation state change
+	EngineLog      Type = "engine:log"      // LogPayload, human-readable log line
+	EnginePhase    Type = "engine:phase"    // PhasePayload, engine state machine transitions
+	NodeStatus     Type = "node:status"     // NodeStatusPayload, per-node runtime state
+	MetricsTick    Type = "metrics:tick"    // MetricsPayload, emitted every 500ms
+	LinkHealth     Type = "link:health"     // LinkHealthPayload, one per deployment every 500ms
+	HostStats      Type = "host:stats"      // HostStatsPayload, host machine usage every second
+	ContainerStats Type = "container:stats" // ContainerStatsPayload, one per container every second
+	FaultInjected  Type = "fault:injected"  // FaultPayload
+	TestProgress   Type = "test:progress"   // TestProgressPayload, while a scenario runs
+	TestDone       Type = "test:done"       // TestDonePayload
 )
 
 // Event is the envelope delivered to subscribers.
@@ -60,26 +63,76 @@ type PhasePayload struct {
 	Message    string `json:"message,omitempty"`
 }
 
-// NodeStatusPayload is the runtime state of a topology node.
-type NodeStatusPayload struct {
-	Deployment string `json:"deployment"`
-	NodeID     string `json:"node_id"`
-	State      string `json:"state"` // pending | starting | healthy | failed | stopped | paused | removed
-	Replicas   int    `json:"replicas"`
-	Ready      int    `json:"ready"`
-	Message    string `json:"message,omitempty"`
-	UpdatedAt  int64  `json:"updated_at"`
+// HealthCheck is one line of a block's deep health document.
+type HealthCheck struct {
+	Name   string         `json:"name"`
+	Status string         `json:"status"` // healthy | degraded | failing
+	Detail map[string]any `json:"detail,omitempty"`
 }
 
-// MetricsPayload is one sample from the metrics pipeline.
+// NodeStatusPayload is the runtime state of a topology node.
+type NodeStatusPayload struct {
+	Deployment string        `json:"deployment"`
+	NodeID     string        `json:"node_id"`
+	State      string        `json:"state"` // pending | starting | healthy | degraded | failed | stopped | paused | removed
+	Replicas   int           `json:"replicas"`
+	Ready      int           `json:"ready"`
+	Message    string        `json:"message,omitempty"`
+	UpdatedAt  int64         `json:"updated_at"`
+	Checks     []HealthCheck `json:"checks,omitempty"`
+}
+
+// ContainerStatsPayload is one resource sample of one container.
+type ContainerStatsPayload struct {
+	Deployment string  `json:"deployment"`
+	NodeID     string  `json:"node_id"`
+	Container  string  `json:"container"`
+	Ts         int64   `json:"ts"`
+	CPUPct     float64 `json:"cpu_pct"`
+	MemUsed    uint64  `json:"mem_used_bytes"`
+	MemLimit   uint64  `json:"mem_limit_bytes"`
+	NetRxBps   float64 `json:"net_rx_bps"`
+	NetTxBps   float64 `json:"net_tx_bps"`
+	Throttled  uint64  `json:"throttled_periods"`
+}
+
+// TestProgressPayload reports a running scenario.
+type TestProgressPayload struct {
+	RunID     string             `json:"run_id"`
+	Scenario  string             `json:"scenario"`
+	Template  string             `json:"template"`
+	Phase     string             `json:"phase"`
+	ElapsedMs int64              `json:"elapsed_ms"`
+	TotalMs   int64              `json:"total_ms"`
+	Step      string             `json:"step,omitempty"`
+	Live      map[string]float64 `json:"live,omitempty"`
+}
+
+// TestDonePayload announces the end of a scenario run.
+type TestDonePayload struct {
+	RunID    string `json:"run_id"`
+	Scenario string `json:"scenario"`
+	Template string `json:"template"`
+	Passed   bool   `json:"passed"`
+	Aborted  bool   `json:"aborted"`
+	Error    string `json:"error,omitempty"`
+}
+
+// MetricsPayload is one sample from the metrics pipeline, per deployment
+// ("" = every deployment summed).
 type MetricsPayload struct {
+	Deployment   string  `json:"deployment"`
 	Ts           int64   `json:"ts"`
 	LatencyMs    float64 `json:"latency_ms"`
 	P99Ms        float64 `json:"p99_ms"`
 	ConsumerLag  int     `json:"consumer_lag"`
 	SagasPerSec  float64 `json:"sagas_per_sec"`
-	CPUPct       float64 `json:"cpu_pct"`
+	ErrorRate    float64 `json:"error_rate"` // failed+compensated+timeout share of finished sagas in the window
+	CPUPct       float64 `json:"cpu_pct"`    // sum over the deployment's containers
 	ActiveFaults int     `json:"active_faults"`
+	SagasOK      int64   `json:"sagas_ok"`
+	SagasFailed  int64   `json:"sagas_failed"`
+	Source       string  `json:"source"` // blocks | mock
 }
 
 // LinkLevel classifies a link's error rate for the map: ok (green), warn
@@ -96,6 +149,8 @@ const (
 type LinkHealthEntry struct {
 	ErrorRate float64   `json:"error_rate"` // 0..1, share of requests/messages lost or failed
 	Level     LinkLevel `json:"level"`
+	RPS       float64   `json:"rps"`
+	P99Ms     float64   `json:"p99_ms"`
 }
 
 // LinkHealthPayload carries every edge of one deployment, keyed by edge id.

@@ -12,6 +12,9 @@
 #   make clean-docker    -> also remove the builder image and cache volumes
 #   make desktop         -> register bin/symphony.desktop with the desktop, so the
 #                           app launches from the app grid with no terminal
+#   make blocks          -> build the five block images (symphony/<block>:dev)
+#   make test            -> Go tests (blocks contract test runs the blocks as processes)
+#   make integration     -> engine tests against the host's Docker daemon
 #
 # Native targets (need a local Go/Node/Wails toolchain, see README):
 #   make build-local     -> wails build on the host
@@ -57,7 +60,28 @@ DOCKER_RUN = $(DOCKER) run --rm \
   -v $(IMAGE)-node-modules:/work/client/node_modules \
   -e HOST_UID=$(HOST_UID) -e HOST_GID=$(HOST_GID) -e PLATFORM=$(PLATFORM)
 
-.PHONY: build image shell run clean clean-docker build-local dev deps bindings check desktop
+.PHONY: build image shell run clean clean-docker build-local dev deps bindings check desktop blocks test integration
+
+# --- block images ------------------------------------------------------------
+
+BLOCKS := gateway service broker database proxy
+
+# Same Dockerfile and context the engine uses for its in-app build, so both
+# paths produce the same image.
+blocks:
+	for b in $(BLOCKS); do \
+	  $(DOCKER) build -f $(SRC)/blocks/Dockerfile --build-arg BLOCK=$$b -t symphony/$$b:dev $(SRC) || exit 1; \
+	done
+	$(DOCKER) images "symphony/*" --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"
+
+test: image
+	$(DOCKER_RUN) $(IMAGE) go test ./...
+
+# Runs inside the builder container with the host's Docker socket and network,
+# so the engine can create real containers and reach their admin ports.
+integration: image
+	$(DOCKER_RUN) --network host -v /var/run/docker.sock:/var/run/docker.sock $(IMAGE) \
+	  go test -tags integration -count=1 -run Integration ./engine/... -v
 
 build: image
 	$(DOCKER_RUN) $(IMAGE)

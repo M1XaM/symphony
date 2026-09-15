@@ -16,6 +16,7 @@ export function Toolbar() {
   const phase = useSymphonyStore(selectPhase)
   const applied = useSymphonyStore(selectIsApplied)
   const busy = useSymphonyStore(selectBusy)
+  const runtime = useSymphonyStore((s) => s.runtime)
   const validation = useSymphonyStore((s) => s.validation)
   const validate = useSymphonyStore((s) => s.validate)
   const planApply = useSymphonyStore((s) => s.planApply)
@@ -36,13 +37,16 @@ export function Toolbar() {
         spellCheck={false}
         aria-label="topology name"
       />
+      {runtime ? (
+        <span className={`pill pill-runtime-${runtime.kind}`} title={runtime.detail}>
+          {runtime.kind === 'docker' ? 'docker' : 'simulated'}
+        </span>
+      ) : null}
       <div className="toolbar-spacer" />
       <button type="button" className="btn" onClick={validate} disabled={busy}>
         Validate
         {validation.length > 0 ? (
-          <span className={`badge ${errors ? 'badge-error' : 'badge-warn'}`}>
-            {errors ? `${errors} err` : `${warnings} warn`}
-          </span>
+          <span className={`badge ${errors ? 'badge-error' : 'badge-warn'}`}>{errors ? `${errors} err` : `${warnings} warn`}</span>
         ) : null}
       </button>
       <button type="button" className="btn" onClick={planApply} disabled={busy}>
@@ -51,13 +55,7 @@ export function Toolbar() {
       <button type="button" className="btn btn-accent" onClick={apply} disabled={busy}>
         Apply
       </button>
-      <button
-        type="button"
-        className="btn"
-        onClick={teardown}
-        disabled={busy || !applied}
-        title={applied ? `tear down "${name}"` : 'nothing running under this name'}
-      >
+      <button type="button" className="btn" onClick={teardown} disabled={busy || !applied} title={applied ? `tear down "${name}"` : 'nothing running under this name'}>
         Teardown
       </button>
       <span className={`pill pill-${phase}`}>{PHASE_LABEL[phase] ?? phase}</span>

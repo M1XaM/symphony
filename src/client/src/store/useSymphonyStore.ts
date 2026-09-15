@@ -2,13 +2,21 @@ import { create } from 'zustand'
 import { backend, errorMessage, hasBackend } from '../lib/backend'
 import { onEvent } from '../lib/events'
 import {
+  DEFAULT_IMAGE,
+  DEFAULT_RESOURCES,
   EMPTY_TOPOLOGY,
+  SCHEMA_VERSION,
+  defaultConfig,
   type ConfigValue,
+  type ContainerStatsEvent,
+  type ControlCommand,
+  type ControlResult,
   type FaultSpec,
   type HostStatsEvent,
   type LinkHealthEntry,
   type LinkHealthEvent,
   type LogEvent,
+  type LogLine,
   type MetricsEvent,
   type NodeKind,
   type NodeStatus,
@@ -19,13 +27,20 @@ import {
   type Plan,
   type Position,
   type ProgressEvent,
+  type Resources,
+  type Run,
+  type RunSummary,
+  type RuntimeInfo,
+  type Scenario,
+  type TestDoneEvent,
+  type TestProgressEvent,
   type Topology,
   type TopologyEdge,
   type TopologyNode,
   type ValidationError,
 } from '../types/topology'
 
-export interface LogLine {
+export interface LogLineEntry {
   id: number
   ts: number
   level: LogEvent['level']
@@ -33,7 +48,16 @@ export interface LogLine {
   message: string
 }
 
-export type DrawerTab = 'plan' | 'stats' | 'log' | 'tests'
+export type DrawerTab = 'plan' | 'stats' | 'logs' | 'log' | 'tests'
+
+/** The two halves of the left panel's slider. */
+export type LeftTab = 'elements' | 'templates'
+
+/** Set while the left panel is in its "build a template" state. */
+export interface TemplateDraft {
+  /** Topology to put back on the canvas if the build is cancelled. */
+  restore: Topology
+}
 
 /** One applied topology as the webview sees it. Several can run at once; the
  *  engine keys them by topology name, and so does the store. */
@@ -45,15 +69,17 @@ export interface Deployment {
   links: Record<string, LinkHealthEntry>
   /** An apply or teardown is in flight for this deployment. */
   busy: boolean
+  /** Last `metrics:tick` for this deployment. */
+  metrics?: MetricsEvent
+  /** Last `container:stats` per node (replicas summed). */
+  containers: Record<string, ContainerStatsEvent>
 }
 
-/** The two halves of the left panel's slider. */
-export type LeftTab = 'elements' | 'templates'
-
-/** Set while the left panel is in its "build a template" state. */
-export interface TemplateDraft {
-  /** Topology to put back on the canvas if the build is cancelled. */
-  restore: Topology
+/** One second of a deployment's container totals, for the Stats tab. */
+export interface SimSample {
+  ts: number
+  cpu_pct: number
+  mem_mb: number
 }
 
 const LOG_CAP = 500
@@ -64,27 +90,39 @@ const TEMPLATES_KEY = 'symphony.templates'
 
 interface SymphonyState {
   initialized: boolean
+  runtime: RuntimeInfo | null
   topology: Topology
   /** bumps whenever a whole topology is swapped in, so the canvas re-fits */
   loadSeq: number
   presets: Topology[]
   selectedNodeId: string | null
-  /** Everything the engine has applied, keyed by topology name. The canvas can
-   *  show a template that is not among them, which then has no runtime state
-   *  of its own — see selectIsApplied. */
+  selectedEdgeId: string | null
+  /** Everything the engine has applied, keyed by topology name. */
   deployments: Record<string, Deployment>
   plan: Plan | null
   opStatus: Record<string, OpStatus>
   validation: ValidationError[]
-  log: LogLine[]
+  log: LogLineEntry[]
+  /** metrics over every deployment (the collector's "" sample) */
   metrics: MetricsEvent | null
   hostStats: HostStatsEvent[]
+  simHistory: Record<string, SimSample[]>
   drawerOpen: boolean
   drawerTab: DrawerTab
   leftTab: LeftTab
   /** Templates the user built, stacked on top of the built-in `presets`. */
   userTemplates: Topology[]
   draft: TemplateDraft | null
+  /** Logs tab: which node and what it said. */
+  logsNode: string | null
+  nodeLogs: LogLine[]
+  /** Tests tab. */
+  scenarios: Scenario[]
+  runs: RunSummary[]
+  activeTest: TestProgressEvent | null
+  openRun: Run | null
+  compareIds: string[]
+  compareRuns: Run[]
 
   init(): Promise<void>
   loadTemplate(name: string): void
@@ -95,15 +133,22 @@ interface SymphonyState {
   updateNode(id: string, patch: Partial<Pick<TopologyNode, 'image' | 'replicas'>>): void
   setColdConfig(id: string, key: string, value: ConfigValue): void
   setHotConfig(id: string, key: string, value: ConfigValue): void
+  setResources(id: string, r: Resources): void
   addEdge(from: string, to: string): void
+  updateEdge(id: string, patch: Partial<Pick<TopologyEdge, 'topic' | 'timeout_ms' | 'retries'>>): void
   removeEdges(ids: string[]): void
   select(id: string | null): void
+  selectEdge(id: string | null): void
   validate(): Promise<void>
   planApply(): Promise<void>
   apply(): Promise<void>
   teardown(): Promise<void>
   injectFault(id: string, fault: FaultSpec): Promise<void>
-  appendLog(line: Omit<LogLine, 'id'>): void
+  clearFaults(id: string): Promise<void>
+  control(id: string, cmd: ControlCommand): Promise<ControlResult | null>
+  setLogsNode(id: string | null): void
+  refreshLogs(): Promise<void>
+  appendLog(line: Omit<LogLineEntry, 'id'>): void
   clearLog(): void
   setDrawer(open: boolean, tab?: DrawerTab): void
   setLeftTab(tab: LeftTab): void
@@ -111,15 +156,26 @@ interface SymphonyState {
   saveTemplate(): Promise<void>
   cancelTemplate(): void
   deleteTemplate(name: string): Promise<void>
+  refreshRuns(): Promise<void>
+  startTest(scenario: string, params: Record<string, unknown>): Promise<void>
+  abortTest(): Promise<void>
+  viewRun(id: string | null): Promise<void>
+  deleteRun(id: string): Promise<void>
+  toggleCompare(id: string): Promise<void>
 }
 
 let logSeq = 0
 /** Shared empty maps, so selectors on a non-applied topology keep a stable reference. */
 const NO_STATUSES: Record<string, NodeStatus> = {}
 const NO_LINKS: Record<string, LinkHealthEntry> = {}
+const NO_CONTAINERS: Record<string, ContainerStatsEvent> = {}
+const NO_SAMPLES: SimSample[] = []
+const hotTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const hotPending = new Map<string, Record<string, ConfigValue>>()
+const resTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function newDeployment(name: string, phase: Phase = 'idle'): Deployment {
-  return { name, phase, statuses: {}, links: {}, busy: false }
+  return { name, phase, statuses: {}, links: {}, busy: false, containers: {} }
 }
 
 /** Return a copy of the deployments map with one entry patched, creating it
@@ -139,8 +195,6 @@ function dropDeployment(deployments: Record<string, Deployment>, name: string): 
   delete next[name]
   return next
 }
-const hotTimers = new Map<string, ReturnType<typeof setTimeout>>()
-const hotPending = new Map<string, Record<string, ConfigValue>>()
 
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T
@@ -167,10 +221,6 @@ function writeTemplates(list: Topology[]): void {
   }
 }
 
-/** Send a library change to the backend and keep whatever comes back, falling
- *  back to the webview's own copy when there is no backend or the file cannot
- *  be written. Callers update the state optimistically first, so the panel
- *  never waits on the disk. */
 async function persistTemplates(list: Topology[], call: () => Promise<Topology[]>): Promise<void> {
   if (!hasBackend()) {
     writeTemplates(list)
@@ -192,8 +242,7 @@ async function persistTemplates(list: Topology[], call: () => Promise<Topology[]
 }
 
 /** Guess what a new edge means from its endpoints. A proxy passes traffic
- *  through, so an edge leaving one continues whatever feeds it: a proxy fed
- *  by a subscription forwards that subscription, with its topic. */
+ *  through, so an edge leaving one continues whatever feeds it. */
 function inferEdge(t: Topology, from: TopologyNode, to: TopologyNode): Pick<TopologyEdge, 'kind' | 'topic'> {
   if (from.kind === 'broker') return { kind: 'subscribes', topic: `${to.id}.events` }
   if (from.kind === 'proxy') {
@@ -217,46 +266,7 @@ function uniqueId(base: string, taken: (id: string) => boolean): string {
   }
 }
 
-function defaultsFor(kind: NodeKind): Pick<TopologyNode, 'image' | 'config'> {
-  switch (kind) {
-    case 'service':
-      return {
-        image: 'symphony/service:dev',
-        config: {
-          hot: { timeout_ms: 800, retry_max: 3, rate_limit_rps: 200, log_level: 'info' },
-          cold: { port: 9000, db_pool_size: 10, heap_mb: 256 },
-        },
-      }
-    case 'broker':
-      return {
-        image: 'apache/kafka:3.8.0',
-        config: {
-          hot: { log_retention_ms: 600000, max_poll_records: 500 },
-          cold: { num_partitions: 3, replication_factor: 1, heap_mb: 512 },
-        },
-      }
-    case 'db':
-      return {
-        image: 'postgres:16-alpine',
-        config: {
-          hot: { statement_timeout_ms: 5000, log_min_duration_ms: 250 },
-          cold: { max_connections: 100, shared_buffers_mb: 128 },
-        },
-      }
-    case 'proxy':
-      return {
-        image: 'ghcr.io/shopify/toxiproxy:2.9.0',
-        config: { hot: { latency_ms: 0, jitter_ms: 0, drop_rate: 0 }, cold: { api_port: 8474 } },
-      }
-    case 'infra':
-      return {
-        image: 'nginx:1.27-alpine',
-        config: { hot: { rate_limit_rps: 500, log_level: 'warn' }, cold: { port: 8080, worker_connections: 1024 } },
-      }
-  }
-}
-
-function progressLine(p: ProgressEvent): Omit<LogLine, 'id'> {
+function progressLine(p: ProgressEvent): Omit<LogLineEntry, 'id'> {
   const n = `${p.index + 1}/${p.count}`
   const base = `[${p.deployment}] ${n} ${p.kind} ${p.target}`
   switch (p.status) {
@@ -269,12 +279,18 @@ function progressLine(p: ProgressEvent): Omit<LogLine, 'id'> {
   }
 }
 
+function warn(source: string, err: unknown): void {
+  useSymphonyStore.getState().appendLog({ ts: Date.now(), level: 'warn', source, message: errorMessage(err) })
+}
+
 export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
   initialized: false,
+  runtime: null,
   topology: EMPTY_TOPOLOGY,
   loadSeq: 0,
   presets: [],
   selectedNodeId: null,
+  selectedEdgeId: null,
   deployments: {},
   plan: null,
   opStatus: {},
@@ -282,11 +298,20 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
   log: [],
   metrics: null,
   hostStats: [],
+  simHistory: {},
   drawerOpen: true,
   drawerTab: 'plan',
   leftTab: 'elements',
   userTemplates: readTemplates(),
   draft: null,
+  logsNode: null,
+  nodeLogs: [],
+  scenarios: [],
+  runs: [],
+  activeTest: null,
+  openRun: null,
+  compareIds: [],
+  compareRuns: [],
 
   async init() {
     if (get().initialized) return
@@ -302,21 +327,15 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
       return
     }
 
-    // The engine and the framework both log while the window is still coming
-    // up, long before any of this is listening. Take what they already wrote,
-    // then subscribe: nothing is emitted in between, since the engine sits idle
-    // until the user acts.
     try {
       for (const l of await backend.getLogHistory()) {
         get().appendLog({ ts: l.ts, level: l.level, source: l.source, message: l.message })
       }
     } catch (err) {
-      get().appendLog({ ts: Date.now(), level: 'warn', source: 'ui', message: `log history: ${errorMessage(err)}` })
+      warn('ui', err)
     }
 
     onEvent<ProgressEvent>('apply:progress', (p) => {
-      // The Plan tab shows the canvas topology's plan; op ids repeat across
-      // deployments, so only its own progress may light the rows up.
       if (p.deployment === get().topology.name) {
         set((s) => ({ opStatus: { ...s.opStatus, [p.op_id]: p.status } }))
       }
@@ -350,7 +369,49 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
         return { deployments: patchDeployment(s.deployments, h.deployment, () => ({ links: h.links })) }
       })
     })
-    onEvent<MetricsEvent>('metrics:tick', (m) => set({ metrics: m }))
+    onEvent<MetricsEvent>('metrics:tick', (m) => {
+      if (!m.deployment) {
+        set({ metrics: m })
+        return
+      }
+      set((s) => {
+        if (!(m.deployment in s.deployments)) return {}
+        return { deployments: patchDeployment(s.deployments, m.deployment, () => ({ metrics: m })) }
+      })
+    })
+    onEvent<ContainerStatsEvent>('container:stats', (c) => {
+      set((s) => {
+        if (!(c.deployment in s.deployments)) return {}
+        const d = s.deployments[c.deployment]
+        const prev = d.containers[c.node_id]
+        // replicas report separately; fold them into the node within the same second
+        const merged: ContainerStatsEvent =
+          prev && prev.container !== c.container && Math.abs(prev.ts - c.ts) < 900
+            ? { ...c, cpu_pct: prev.cpu_pct + c.cpu_pct, mem_used_bytes: prev.mem_used_bytes + c.mem_used_bytes, net_rx_bps: prev.net_rx_bps + c.net_rx_bps, net_tx_bps: prev.net_tx_bps + c.net_tx_bps }
+            : c
+        const containers = { ...d.containers, [c.node_id]: merged }
+        let cpu = 0
+        let mem = 0
+        for (const v of Object.values(containers)) {
+          cpu += v.cpu_pct
+          mem += v.mem_used_bytes
+        }
+        const hist = s.simHistory[c.deployment] ?? []
+        const last = hist[hist.length - 1]
+        let next = hist
+        if (!last || c.ts - last.ts >= 900) {
+          next = hist.length >= HOST_STATS_CAP ? hist.slice(1) : hist.slice()
+          next.push({ ts: c.ts, cpu_pct: Math.round(cpu * 10) / 10, mem_mb: Math.round(mem / 1048576) })
+        } else {
+          next = hist.slice(0, -1)
+          next.push({ ts: last.ts, cpu_pct: Math.round(cpu * 10) / 10, mem_mb: Math.round(mem / 1048576) })
+        }
+        return {
+          deployments: patchDeployment(s.deployments, c.deployment, () => ({ containers })),
+          simHistory: { ...s.simHistory, [c.deployment]: next },
+        }
+      })
+    })
     onEvent<HostStatsEvent>('host:stats', (h) => {
       set((s) => {
         const hostStats = s.hostStats.length >= HOST_STATS_CAP ? s.hostStats.slice(1) : s.hostStats.slice()
@@ -358,20 +419,32 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
         return { hostStats }
       })
     })
+    onEvent<TestProgressEvent>('test:progress', (p) => set({ activeTest: p }))
+    onEvent<TestDoneEvent>('test:done', (d) => {
+      set({ activeTest: null })
+      get().appendLog({
+        ts: Date.now(),
+        level: d.passed ? 'info' : 'warn',
+        source: 'test',
+        message: `${d.scenario} on "${d.template}": ${d.aborted ? 'aborted' : d.passed ? 'passed' : 'failed'}${d.error ? ` (${d.error})` : ''}`,
+      })
+      void get().refreshRuns()
+      if (get().openRun?.id === d.run_id) void get().viewRun(d.run_id)
+    })
 
     try {
-      const [presets, running, hostStats] = await Promise.all([
+      const [runtime, presets, running, hostStats] = await Promise.all([
+        backend.getRuntimeInfo(),
         backend.getPresets(),
         backend.getDeployments(),
         backend.getHostStats(),
       ])
       const deployments: Record<string, Deployment> = {}
       for (const d of running) {
-        deployments[d.name] = { name: d.name, phase: d.phase, statuses: d.statuses, links: {}, busy: false }
+        deployments[d.name] = { name: d.name, phase: d.phase, statuses: d.statuses, links: {}, busy: false, containers: {} }
       }
-      set({ presets, deployments, hostStats: hostStats.slice(-HOST_STATS_CAP) })
+      set({ runtime, presets, deployments, hostStats: hostStats.slice(-HOST_STATS_CAP) })
       if (running.length > 0) {
-        // Come back to what the engine is running rather than a blank canvas.
         set((s) => ({ topology: running[0].topology, loadSeq: s.loadSeq + 1 }))
       } else if (presets.length > 0) {
         get().loadTemplate(presets[0].name)
@@ -384,19 +457,19 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
       let stored = await backend.getUserTemplates()
       const mirrored = get().userTemplates
       if (stored.length === 0 && mirrored.length > 0) {
-        // First run of a build that stores templates on disk: lift the ones
-        // the webview was holding into the file.
         for (const t of mirrored) stored = await backend.saveUserTemplate(t)
       }
       set({ userTemplates: stored })
       writeTemplates(stored)
     } catch (err) {
-      get().appendLog({
-        ts: Date.now(),
-        level: 'warn',
-        source: 'library',
-        message: `${errorMessage(err)} — using the templates kept in this webview`,
-      })
+      warn('library', err)
+    }
+
+    try {
+      set({ scenarios: await backend.listScenarios() })
+      await get().refreshRuns()
+    } catch (err) {
+      warn('tests', err)
     }
   },
 
@@ -408,6 +481,7 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
       topology: clone(template),
       loadSeq: s.loadSeq + 1,
       selectedNodeId: null,
+      selectedEdgeId: null,
       plan: null,
       opStatus: {},
       validation: [],
@@ -417,8 +491,6 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
   },
 
   setName(name) {
-    // The engine keys deployments by name, so what is applied keeps its name
-    // until it is torn down; the toolbar makes the field read-only then.
     if (selectIsApplied(get())) return
     set((s) => ({ topology: { ...s.topology, name } }))
   },
@@ -430,11 +502,13 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
       const node: TopologyNode = {
         id,
         kind,
+        image: DEFAULT_IMAGE[kind],
         replicas: 1,
         position: { x: Math.round(position.x), y: Math.round(position.y) },
-        ...defaultsFor(kind),
+        config: defaultConfig(kind),
+        resources: { ...DEFAULT_RESOURCES[kind] },
       }
-      return { topology: { ...s.topology, nodes: [...s.topology.nodes, node] }, selectedNodeId: id }
+      return { topology: { ...s.topology, nodes: [...s.topology.nodes, node] }, selectedNodeId: id, selectedEdgeId: null }
     })
   },
 
@@ -478,8 +552,6 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
   },
 
   setHotConfig(id, key, value) {
-    // Update the local topology immediately so the control feels live, then
-    // coalesce backend calls per node.
     set((s) => ({
       topology: {
         ...s.topology,
@@ -499,8 +571,6 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
         hotTimers.delete(id)
         const patch = hotPending.get(id)
         hotPending.delete(id)
-        // Only a running node has anything to push to; otherwise the change
-        // simply rides along with the next Apply.
         if (!patch || !hasBackend() || !selectIsApplied(get())) return
         try {
           await backend.setHotConfig(get().topology.name, id, patch)
@@ -513,6 +583,28 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
           })
         }
       }, HOT_DEBOUNCE_MS),
+    )
+  },
+
+  setResources(id, r) {
+    set((s) => ({
+      topology: { ...s.topology, nodes: s.topology.nodes.map((n) => (n.id === id ? { ...n, resources: { ...n.resources, ...r } } : n)) },
+    }))
+    const existing = resTimers.get(id)
+    if (existing) clearTimeout(existing)
+    resTimers.set(
+      id,
+      setTimeout(async () => {
+        resTimers.delete(id)
+        if (!hasBackend() || !selectIsApplied(get())) return
+        const node = get().topology.nodes.find((n) => n.id === id)
+        if (!node) return
+        try {
+          await backend.setResources(get().topology.name, id, node.resources)
+        } catch (err) {
+          warn('runtime', err)
+        }
+      }, 400),
     )
   },
 
@@ -530,14 +622,27 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
     })
   },
 
+  updateEdge(id, patch) {
+    set((s) => ({
+      topology: { ...s.topology, edges: s.topology.edges.map((e) => (e.id === id ? { ...e, ...patch } : e)) },
+    }))
+  },
+
   removeEdges(ids) {
     if (ids.length === 0) return
     const gone = new Set(ids)
-    set((s) => ({ topology: { ...s.topology, edges: s.topology.edges.filter((e) => !gone.has(e.id)) } }))
+    set((s) => ({
+      topology: { ...s.topology, edges: s.topology.edges.filter((e) => !gone.has(e.id)) },
+      selectedEdgeId: s.selectedEdgeId && gone.has(s.selectedEdgeId) ? null : s.selectedEdgeId,
+    }))
   },
 
   select(id) {
-    if (get().selectedNodeId !== id) set({ selectedNodeId: id })
+    if (get().selectedNodeId !== id) set({ selectedNodeId: id, selectedEdgeId: id ? null : get().selectedEdgeId })
+  },
+
+  selectEdge(id) {
+    if (get().selectedEdgeId !== id) set({ selectedEdgeId: id, selectedNodeId: id ? null : get().selectedNodeId })
   },
 
   async validate() {
@@ -578,15 +683,12 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
     if (!hasBackend()) return
     const name = get().topology.name
     if (get().deployments[name]?.busy) return
-    // From here on this topology is one of the engine's deployments, next to
-    // whatever else is already running; its statuses and phase are its own.
     set((s) => ({
       drawerOpen: true,
       drawerTab: 'log',
       deployments: patchDeployment(s.deployments, name, () => ({ busy: true })),
     }))
     try {
-      // Refresh the plan so the Plan tab shows what is about to run.
       const plan = await backend.plan(get().topology)
       set({ plan, opStatus: {} })
       await backend.apply(get().topology)
@@ -594,7 +696,6 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
       get().appendLog({ ts: Date.now(), level: 'error', source: 'apply', message: `[${name}] ${errorMessage(err)}` })
     } finally {
       set((s) => ({
-        // an apply that ended with nothing running has already been dropped
         deployments: name in s.deployments ? patchDeployment(s.deployments, name, () => ({ busy: false })) : s.deployments,
       }))
     }
@@ -629,6 +730,41 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
     }
   },
 
+  async clearFaults(id) {
+    if (!hasBackend() || !selectIsApplied(get())) return
+    try {
+      await backend.clearFaults(get().topology.name, id)
+    } catch (err) {
+      warn('fault', err)
+    }
+  },
+
+  async control(id, cmd) {
+    if (!hasBackend() || !selectIsApplied(get())) return null
+    try {
+      return await backend.control(get().topology.name, id, cmd)
+    } catch (err) {
+      get().appendLog({ ts: Date.now(), level: 'warn', source: 'control', message: `${id} ${cmd.op}: ${errorMessage(err)}` })
+      return null
+    }
+  },
+
+  setLogsNode(id) {
+    set({ logsNode: id, nodeLogs: [] })
+    if (id) void get().refreshLogs()
+  },
+
+  async refreshLogs() {
+    const id = get().logsNode
+    if (!id || !hasBackend() || !selectIsApplied(get())) return
+    try {
+      const lines = await backend.getNodeLogs(get().topology.name, id, 300)
+      if (get().logsNode === id) set({ nodeLogs: lines })
+    } catch (err) {
+      warn('logs', err)
+    }
+  },
+
   appendLog(line) {
     set((s) => {
       const next = s.log.length >= LOG_CAP ? s.log.slice(s.log.length - LOG_CAP + 1) : s.log.slice()
@@ -652,9 +788,10 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
   startTemplate() {
     set((s) => ({
       draft: { restore: s.topology },
-      topology: { version: s.topology.version, name: '', nodes: [], edges: [] },
+      topology: { version: SCHEMA_VERSION, name: '', nodes: [], edges: [] },
       loadSeq: s.loadSeq + 1,
       selectedNodeId: null,
+      selectedEdgeId: null,
       plan: null,
       opStatus: {},
       validation: [],
@@ -679,7 +816,7 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
   cancelTemplate() {
     const draft = get().draft
     if (!draft) return
-    set((s) => ({ draft: null, topology: draft.restore, loadSeq: s.loadSeq + 1, selectedNodeId: null }))
+    set((s) => ({ draft: null, topology: draft.restore, loadSeq: s.loadSeq + 1, selectedNodeId: null, selectedEdgeId: null }))
   },
 
   async deleteTemplate(name) {
@@ -689,12 +826,89 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
     get().appendLog({ ts: Date.now(), level: 'info', source: 'ui', message: `deleted template "${name}"` })
     await persistTemplates(userTemplates, () => backend.deleteUserTemplate(name))
   },
+
+  async refreshRuns() {
+    if (!hasBackend()) return
+    try {
+      set({ runs: await backend.listRuns() })
+    } catch (err) {
+      warn('tests', err)
+    }
+  },
+
+  async startTest(scenario, params) {
+    if (!hasBackend()) return
+    try {
+      const id = await backend.startTest(scenario, get().topology, params)
+      set({ activeTest: { run_id: id, scenario, template: get().topology.name, phase: 'starting', elapsed_ms: 0, total_ms: 0 } })
+      get().appendLog({ ts: Date.now(), level: 'info', source: 'test', message: `started ${scenario} on "${get().topology.name}" (${id})` })
+      await get().refreshRuns()
+    } catch (err) {
+      get().appendLog({ ts: Date.now(), level: 'error', source: 'test', message: errorMessage(err) })
+    }
+  },
+
+  async abortTest() {
+    const a = get().activeTest
+    if (!a || !hasBackend()) return
+    try {
+      await backend.abortTest(a.run_id)
+    } catch (err) {
+      warn('test', err)
+    }
+  },
+
+  async viewRun(id) {
+    if (!id) {
+      set({ openRun: null })
+      return
+    }
+    try {
+      set({ openRun: await backend.getRun(id) })
+    } catch (err) {
+      warn('tests', err)
+    }
+  },
+
+  async deleteRun(id) {
+    try {
+      await backend.deleteRun(id)
+      set((s) => ({
+        openRun: s.openRun?.id === id ? null : s.openRun,
+        compareIds: s.compareIds.filter((c) => c !== id),
+        compareRuns: s.compareRuns.filter((r) => r.id !== id),
+      }))
+      await get().refreshRuns()
+    } catch (err) {
+      warn('tests', err)
+    }
+  },
+
+  async toggleCompare(id) {
+    const s = get()
+    if (s.compareIds.includes(id)) {
+      set({ compareIds: s.compareIds.filter((c) => c !== id), compareRuns: s.compareRuns.filter((r) => r.id !== id) })
+      return
+    }
+    try {
+      const run = await backend.getRun(id)
+      set((st) => ({ compareIds: [...st.compareIds, id].slice(-4), compareRuns: [...st.compareRuns, run].slice(-4) }))
+    } catch (err) {
+      warn('tests', err)
+    }
+  },
 }))
 
 /** Selector helper: the currently selected node, or null. */
 export function selectSelectedNode(s: SymphonyState): TopologyNode | null {
   if (!s.selectedNodeId) return null
   return s.topology.nodes.find((n) => n.id === s.selectedNodeId) ?? null
+}
+
+/** The currently selected edge, or null. */
+export function selectSelectedEdge(s: SymphonyState): TopologyEdge | null {
+  if (!s.selectedEdgeId) return null
+  return s.topology.edges.find((e) => e.id === s.selectedEdgeId) ?? null
 }
 
 /** The deployment of the topology on the canvas, if the engine is running it. */
@@ -707,23 +921,36 @@ export function selectIsApplied(s: SymphonyState): boolean {
   return s.topology.name in s.deployments
 }
 
-/** Statuses describe the canvas topology's own deployment only: another
- *  template is not running, whatever node ids it happens to share. */
 export function selectStatuses(s: SymphonyState): Record<string, NodeStatus> {
   return selectDeployment(s)?.statuses ?? NO_STATUSES
 }
 
-/** Per-edge health of the canvas topology's deployment; empty when not applied. */
 export function selectLinks(s: SymphonyState): Record<string, LinkHealthEntry> {
   return selectDeployment(s)?.links ?? NO_LINKS
 }
 
-/** The phase of what is on the canvas, idle when it is not applied. */
+export function selectContainers(s: SymphonyState): Record<string, ContainerStatsEvent> {
+  return selectDeployment(s)?.containers ?? NO_CONTAINERS
+}
+
+export function selectSimHistory(s: SymphonyState): SimSample[] {
+  return s.simHistory[s.topology.name] ?? NO_SAMPLES
+}
+
+/** Metrics of the canvas topology when applied, else the all-deployments sample. */
+export function selectMetrics(s: SymphonyState): MetricsEvent | null {
+  return selectDeployment(s)?.metrics ?? (selectIsApplied(s) ? null : s.metrics)
+}
+
 export function selectPhase(s: SymphonyState): Phase {
   return selectDeployment(s)?.phase ?? 'idle'
 }
 
-/** True while the canvas topology is being applied or torn down. */
 export function selectBusy(s: SymphonyState): boolean {
   return selectDeployment(s)?.busy ?? false
+}
+
+/** The gateway node of the canvas topology, if any. */
+export function selectGateway(s: SymphonyState): TopologyNode | null {
+  return s.topology.nodes.find((n) => n.kind === 'infra') ?? null
 }

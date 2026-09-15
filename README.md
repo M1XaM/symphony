@@ -56,19 +56,54 @@ On Linux the Makefile adds `-tags webkit2_41` automatically when only
 webkit2gtk-4.1 is installed. On macOS `./bin/install` is a launcher script
 next to the copied `.app` bundle.
 
-## What is stubbed
+## How it runs
+
+Every node kind is a prebuilt, universal container image (`src/blocks/`):
+
+| block | kind | role |
+|-------|------|------|
+| `gateway`  | `infra`   | ingress + load generator; measures every saga end to end |
+| `service`  | `service` | worker pool running a behaviour program per inbound edge; orchestrator, participant or choreography step depending on its links |
+| `broker`   | `broker`  | topics, partitions, consumer groups, at-least-once push delivery |
+| `database` | `db`      | bounded connection pool, latency model, transactions, storage cap |
+| `proxy`    | `proxy`   | forwards paired edges; where link faults are injected |
+
+Applying a topology creates a Docker network per deployment
+(`symphony-<slug>`), one container per replica (`<slug>-<node>[-n]`) with
+its wiring in `SYMPHONY_LINKS`, waits for each block's own `/health`, and
+then drives it through the admin port every block publishes on
+`127.0.0.1`: hot config (`config.set`), faults (`fault.set`, `chaos.*`), the
+load generator (`load.set`), behaviour programs, logs and metrics. Container
+limits (CPU, RAM), pause/kill and network partitions go through the Docker
+Engine API directly. The contract is documented in `src/blocks/README.md`.
+
+Block images are built by `make blocks`, or by the app itself from an
+embedded copy of `src/blocks` when an image is missing, so a fresh install
+needs only Docker. Without a reachable daemon the app falls back to an
+in-memory fake runtime (`SYMPHONY_RUNTIME=fake` forces it) and mock numbers.
+
+Containers keep running when the window closes and are adopted by the next
+session (`SYMPHONY_TEARDOWN_ON_EXIT=1` tears them down instead). Everything
+Symphony creates carries `symphony.owner=<instance id>` labels.
+
+### Tests tab
+
+Eighteen predefined scenarios (`src/engine/tests/scenarios/`) run a timeline
+of load, faults, resource limits and config changes against the canvas
+template, collect the same series the map shows, evaluate assertions per
+phase and store the run under `<user config dir>/symphony/runs/`. Runs of the
+same scenario on different templates can be compared side by side.
+
+### Checks
+
+    make test          # Go unit + blocks contract test (blocks run as processes, no Docker)
+    make integration   # engine against the host's Docker daemon (real containers)
+    make check         # go vet + client typecheck
+
+## What is still simulated
 
 | piece | today | where the real thing goes |
 |-------|-------|---------------------------|
-| Container runtime | `runtime.FakeRuntime` walks containers `pending → starting → healthy` on timers. | `src/engine/runtime/docker.go`: every method returns `ErrNotImplemented`; implement with `github.com/docker/docker/client` and swap the constructor in `src/engine/app/app.go`. |
-| Topics | `ensure_topic` sleeps 80 ms and logs. | `core.Engine.executeOp` case `OpEnsureTopic`: broker admin client. |
-| Hot config transport | `control` ops and `SetHotConfig` update the engine's copy and log. | `core.Engine.executeOp` case `OpControl` and `core.Engine.SetHotConfig`: HTTP admin endpoint / SIGHUP / toxiproxy API. |
-| Faults | `pause` and `kill` go through the runtime; `latency`, `drop`, `partition`, `cpu_stress` are recorded and logged only. | `core.Engine.InjectFault`: toxiproxy toxics, netem, stress-ng exec. |
-| Metrics | `src/engine/metrics` random-walks around a baseline that reacts to node health and active faults. | Replace `Ticker.sample` with real collectors; keep `events.MetricsPayload`. |
-| Link health | The map colours every edge of a running topology from a per-edge error rate (`link:health`, every 500 ms): green below 5 % lost requests, yellow from 5 %, red from 25 % (`metrics.WarnThreshold` / `CritThreshold`). Today the rate is derived from the endpoint nodes' state and active faults. | Replace `Ticker.errorRate` with proxy / consumer counters; keep `events.LinkHealthPayload`. |
-| Host stats | Real: `src/engine/hoststats` samples the machine's CPU, RAM and network throughput once a second with gopsutil and feeds the Stats tab. | — |
-| Deployments | Real, in memory: every applied topology is a deployment keyed by its name with its own network (`symphony-<slug>`), container names (`<slug>-<node>`), statuses and faults, so several templates run side by side and each is applied, tuned and torn down on its own. | `runtime.DockerRuntime` gives each deployment real containers on its own network. |
-| Persistence | Real for templates: `engine/library` keeps the ones the user builds in `<user config dir>/symphony/templates.json`, mirrored into the webview's `localStorage` as a fallback. Built-in templates stay Go literals in `src/engine/spec/presets.go`. | The applied topology and run history are still not saved; `spec.Encode/Decode` and `library.Library` are what to build that on. |
-| Edge editing | Edges are created by connecting handles; kind is inferred, topic defaults to `<node>.events`. A proxy node can sit in any path (`service -> proxy -> service`, `broker -> proxy -> service`); messaging edges through it are resolved to the broker behind it. | Inspector panel for edges. |
-
-Not in scope here by design: tests, Docker calls, packaging beyond `make build`.
+| Network-level shaping (bandwidth, netem) | done in the proxy block at HTTP level | tc/netem needs `NET_ADMIN`; add per-link if a scenario needs it on a link without a proxy |
+| Third-party images | every node runs a Symphony block | a thin adapter block speaking the same contract in front of a real Postgres/Kafka |
+| Metrics on the fake runtime | random walk derived from engine state | only used when Docker is unavailable |

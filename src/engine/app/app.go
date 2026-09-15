@@ -1,7 +1,7 @@
 // Package app wires the backend together and runs the Wails window. It is
 // shared by the two entry points (main.go at the module root, which Wails
-// builds with the frontend embedded, and cmd/symphony, which serves the
-// frontend from disk for go-run development).
+// builds with the frontend and the block sources embedded, and cmd/symphony,
+// which serves both from disk for go-run development).
 package app
 
 import (
@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/wailsapp/wails/v2"
@@ -20,9 +21,11 @@ import (
 	"symphony/engine/core"
 	"symphony/engine/events"
 	"symphony/engine/hoststats"
+	"symphony/engine/images"
 	"symphony/engine/library"
 	"symphony/engine/metrics"
 	"symphony/engine/runtime"
+	"symphony/engine/tests"
 )
 
 // busLogger routes Wails' own logging into the event bus, so it lands in the
@@ -52,28 +55,72 @@ func (l busLogger) Fatal(m string) {
 // Options for Run.
 type Options struct {
 	Assets fs.FS
+	// Blocks is the source tree the block images are built from (go.mod,
+	// go.sum and blocks/); nil disables in-app image builds.
+	Blocks fs.FS
 	Title  string
+	// ForceFake skips Docker even when a daemon is reachable (SYMPHONY_RUNTIME=fake).
+	ForceFake bool
+	// TeardownOnExit removes every deployment when the window closes
+	// (SYMPHONY_TEARDOWN_ON_EXIT=1); by default containers keep running and
+	// are adopted by the next session.
+	TeardownOnExit bool
 }
 
-// Run constructs bus -> runtime -> engine -> metrics -> api and blocks until
-// the window closes.
+// Run constructs bus -> runtime -> engine -> collectors -> api and blocks
+// until the window closes.
 func Run(opts Options) error {
 	if opts.Title == "" {
 		opts.Title = "Symphony"
 	}
+	if os.Getenv("SYMPHONY_RUNTIME") == "fake" {
+		opts.ForceFake = true
+	}
+	if os.Getenv("SYMPHONY_TEARDOWN_ON_EXIT") == "1" {
+		opts.TeardownOnExit = true
+	}
 
 	bus := events.NewBus()
-	rt := runtime.NewFake(runtime.FakeOptions{})
-	// Swap for runtime.NewDocker("") once DockerRuntime is implemented.
-	eng := core.New(rt, bus)
-	tick := metrics.NewTicker(bus, 500*time.Millisecond, eng.MetricInputs, eng.LinkInputs)
+	configDir := ""
+	if dir, err := os.UserConfigDir(); err == nil {
+		configDir = filepath.Join(dir, "symphony")
+	} else {
+		bus.Log("warn", "app", err.Error()+" — templates, deployments and test runs will not persist")
+	}
+	store := core.NewStore(configDir)
+	owner, err := store.InstanceID()
+	if err != nil {
+		bus.Log("warn", "app", "instance id: "+err.Error())
+		owner = "symphony"
+	}
+
+	var rt runtime.Runtime
+	info := api.RuntimeInfo{Kind: "fake", Detail: "no container daemon; containers are simulated"}
+	var dockerRT *runtime.DockerRuntime
+	if !opts.ForceFake {
+		d, detail, err := runtime.NewDocker(context.Background(), owner)
+		if err != nil {
+			bus.Log("warn", "runtime", err.Error()+" — falling back to the fake runtime")
+		} else {
+			dockerRT = d
+			rt = d
+			info = api.RuntimeInfo{Kind: "docker", Detail: detail}
+		}
+	}
+	if rt == nil {
+		rt = runtime.NewFake(runtime.FakeOptions{})
+	}
+
+	eng := core.New(core.Options{Runtime: rt, Bus: bus, Images: images.NewEnsurer(opts.Blocks), Store: store})
+	col := metrics.NewCollector(bus, 500*time.Millisecond, eng)
 	host := hoststats.New(bus, time.Second)
+	runner := tests.NewRunner(eng, bus, configDir, info.Kind)
 
 	libPath, err := library.DefaultPath()
 	if err != nil {
 		bus.Log("warn", "library", err.Error()+" — saved templates will not persist")
 	}
-	bound := api.New(eng, bus, library.New(libPath), host)
+	bound := api.New(api.Deps{Engine: eng, Bus: bus, Library: library.New(libPath), Host: host, Collector: col, Tests: runner, Runtime: info})
 
 	return wails.Run(&options.App{
 		Title:     opts.Title,
@@ -92,13 +139,26 @@ func Run(opts Options) error {
 		LogLevelProduction: logger.INFO,
 		OnStartup: func(ctx context.Context) {
 			api.Startup(bound, ctx)
-			tick.Start(ctx)
+			if dockerRT != nil {
+				eng.Adopt(ctx)
+			}
+			eng.Start(ctx)
+			col.Start(ctx)
 			host.Start(ctx)
 		},
 		OnShutdown: func(ctx context.Context) {
+			if opts.TeardownOnExit {
+				tctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				eng.TeardownAll(tctx)
+				cancel()
+			}
 			host.Stop()
-			tick.Stop()
+			col.Stop()
+			eng.Stop()
 			api.Shutdown(bound)
+			if dockerRT != nil {
+				_ = dockerRT.Close()
+			}
 		},
 		Bind: []interface{}{bound},
 	})

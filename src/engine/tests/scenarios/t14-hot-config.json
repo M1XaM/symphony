@@ -1,0 +1,99 @@
+{
+  "id": "t14-hot-config",
+  "name": "Hot config under load",
+  "description": "Change hot keys (timeout, retries) at steady load, then a cold key (workers) that recreates the container.",
+  "reveals": "The value of the hot/cold split: a blip for hot changes, downtime for cold ones.",
+  "tags": [
+    "operations"
+  ],
+  "requires": {
+    "kinds": [
+      "infra",
+      "service"
+    ]
+  },
+  "params": {
+    "rps": 40,
+    "concurrency": 64,
+    "duration_s": 60
+  },
+  "timeline": [
+    {
+      "at_s": 0,
+      "do": "load.set",
+      "args": {
+        "rps": "{rps}",
+        "concurrency": "{concurrency}"
+      }
+    },
+    {
+      "at_s": 10,
+      "do": "phase",
+      "phase": "steady"
+    },
+    {
+      "at_s": 20,
+      "do": "phase",
+      "phase": "hot"
+    },
+    {
+      "at_s": 20,
+      "do": "config.set",
+      "kind": "service",
+      "args": {
+        "timeout_ms": 1200,
+        "retry_max": 2
+      }
+    },
+    {
+      "at_s": 30,
+      "do": "phase",
+      "phase": "cold"
+    },
+    {
+      "at_s": 30,
+      "do": "apply"
+    },
+    {
+      "at_s": 45,
+      "do": "phase",
+      "phase": "recovery"
+    },
+    {
+      "at_s": "{duration_s}",
+      "do": "load.stop"
+    },
+    {
+      "at_s": "{duration_s}",
+      "do": "end"
+    }
+  ],
+  "collect": [
+    "sagas_per_sec",
+    "latency_p50_ms",
+    "latency_p99_ms",
+    "error_rate",
+    "consumer_lag",
+    "cpu_pct",
+    "sagas_ok_total",
+    "sagas_failed_total",
+    "nodes_healthy",
+    "link.error_rate[*]",
+    "container.cpu[*]",
+    "container.mem_mb[*]"
+  ],
+  "assert": [
+    {
+      "metric": "error_rate.mean",
+      "op": "<=",
+      "value": 0.01,
+      "phase": "steady"
+    },
+    {
+      "metric": "error_rate.mean",
+      "op": "<=",
+      "value": 0.02,
+      "phase": "hot"
+    }
+  ]
+}

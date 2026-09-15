@@ -1,0 +1,93 @@
+{
+  "id": "t15-scale-out",
+  "name": "Scale out under load",
+  "description": "Raise the participant's replicas 1 -> replicas (a cold recreate) at load, then back.",
+  "reveals": "How each style copes with topology change and whether client-side load balancing spreads the load.",
+  "tags": [
+    "operations"
+  ],
+  "requires": {
+    "kinds": [
+      "infra",
+      "service"
+    ]
+  },
+  "params": {
+    "rps": 40,
+    "concurrency": 64,
+    "replicas": 3,
+    "duration_s": 70
+  },
+  "timeline": [
+    {
+      "at_s": 0,
+      "do": "load.set",
+      "args": {
+        "rps": "{rps}",
+        "concurrency": "{concurrency}"
+      }
+    },
+    {
+      "at_s": 10,
+      "do": "phase",
+      "phase": "steady"
+    },
+    {
+      "at_s": 20,
+      "do": "phase",
+      "phase": "scale"
+    },
+    {
+      "at_s": 20,
+      "do": "replicas.set",
+      "kind": "participant",
+      "args": {
+        "replicas": "{replicas}"
+      }
+    },
+    {
+      "at_s": 45,
+      "do": "phase",
+      "phase": "scaled"
+    },
+    {
+      "at_s": 50,
+      "do": "apply"
+    },
+    {
+      "at_s": 50,
+      "do": "phase",
+      "phase": "recovery"
+    },
+    {
+      "at_s": "{duration_s}",
+      "do": "load.stop"
+    },
+    {
+      "at_s": "{duration_s}",
+      "do": "end"
+    }
+  ],
+  "collect": [
+    "sagas_per_sec",
+    "latency_p50_ms",
+    "latency_p99_ms",
+    "error_rate",
+    "consumer_lag",
+    "cpu_pct",
+    "sagas_ok_total",
+    "sagas_failed_total",
+    "nodes_healthy",
+    "link.error_rate[*]",
+    "container.cpu[*]",
+    "container.mem_mb[*]"
+  ],
+  "assert": [
+    {
+      "metric": "error_rate.mean",
+      "op": "<=",
+      "value": 0.01,
+      "phase": "steady"
+    }
+  ]
+}

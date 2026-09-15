@@ -4,6 +4,8 @@
 // binding generator (src/client/wailsjs/go/models.ts).
 package spec
 
+import "encoding/json"
+
 // NodeKind classifies what a node runs. It drives ordering in the planner
 // (databases and brokers start before services) and rendering on the canvas.
 type NodeKind string
@@ -83,15 +85,28 @@ type Config struct {
 	Cold map[string]any `json:"cold"`
 }
 
+// Resources are the container limits Symphony asks the runtime for. Zero
+// means unlimited. They are hot: the runtime updates a running container
+// in place.
+type Resources struct {
+	CPUs     float64 `json:"cpus,omitempty"`      // e.g. 0.5 = half a core
+	MemoryMB int     `json:"memory_mb,omitempty"` // hard limit, no swap
+	PidsMax  int     `json:"pids_max,omitempty"`
+}
+
 // Node is one deployable unit of the topology. Replicas > 1 means the
 // runtime creates that many identically configured containers.
 type Node struct {
-	ID       string   `json:"id"`
-	Kind     NodeKind `json:"kind"`
-	Image    string   `json:"image"`
-	Replicas int      `json:"replicas"`
-	Position Position `json:"position"`
-	Config   Config   `json:"config"`
+	ID        string    `json:"id"`
+	Kind      NodeKind  `json:"kind"`
+	Image     string    `json:"image"`
+	Replicas  int       `json:"replicas"`
+	Position  Position  `json:"position"`
+	Config    Config    `json:"config"`
+	Resources Resources `json:"resources"`
+	// Behaviour is the block's behaviour program (see blocks/common/behaviour).
+	// Empty means the block derives the default from its links.
+	Behaviour json.RawMessage `json:"behaviour,omitempty"`
 }
 
 // Edge connects two nodes. Topic is required for messaging edges. Via names a
@@ -104,6 +119,10 @@ type Edge struct {
 	Kind  EdgeKind `json:"kind"`
 	Topic string   `json:"topic,omitempty"`
 	Via   string   `json:"via,omitempty"`
+	// TimeoutMs and Retries override the sender's defaults on this link;
+	// zero keeps the node's config (timeout_ms / retry_max).
+	TimeoutMs int `json:"timeout_ms,omitempty"`
+	Retries   int `json:"retries,omitempty"`
 }
 
 // Topology is the full desired-state graph for one benchmark scenario.
@@ -239,6 +258,7 @@ func (t Topology) Clone() Topology {
 	for i, n := range t.Nodes {
 		n.Config.Hot = copyMap(n.Config.Hot)
 		n.Config.Cold = copyMap(n.Config.Cold)
+		n.Behaviour = append(json.RawMessage(nil), n.Behaviour...)
 		out.Nodes[i] = n
 	}
 	out.Edges = append([]Edge(nil), t.Edges...)

@@ -1,0 +1,128 @@
+{
+  "id": "t09-pool-exhaustion",
+  "name": "Database pool exhaustion",
+  "description": "Shrink the database's connection pool to a handful while at load, then restore it.",
+  "reveals": "How a small dependency limit propagates through each chain.",
+  "tags": [
+    "resources"
+  ],
+  "requires": {
+    "kinds": [
+      "infra",
+      "service",
+      "db"
+    ]
+  },
+  "params": {
+    "rps": 40,
+    "concurrency": 64,
+    "max_connections": 3,
+    "duration_s": 60
+  },
+  "timeline": [
+    {
+      "at_s": 0,
+      "do": "load.set",
+      "args": {
+        "rps": "{rps}",
+        "concurrency": "{concurrency}"
+      }
+    },
+    {
+      "at_s": 10,
+      "do": "phase",
+      "phase": "steady"
+    },
+    {
+      "at_s": 20,
+      "do": "phase",
+      "phase": "pressure"
+    },
+    {
+      "at_s": 20,
+      "do": "control",
+      "kind": "db",
+      "args": {
+        "op": "pool.set",
+        "params": {
+          "max_connections": "{max_connections}",
+          "statement_timeout_ms": 200
+        }
+      }
+    },
+    {
+      "at_s": 20,
+      "do": "control",
+      "kind": "db",
+      "args": {
+        "op": "latency.set",
+        "params": {
+          "write_ms": 40
+        }
+      }
+    },
+    {
+      "at_s": 40,
+      "do": "phase",
+      "phase": "recovery"
+    },
+    {
+      "at_s": 40,
+      "do": "control",
+      "kind": "db",
+      "args": {
+        "op": "pool.set",
+        "params": {
+          "max_connections": 100,
+          "statement_timeout_ms": 5000
+        }
+      }
+    },
+    {
+      "at_s": 40,
+      "do": "control",
+      "kind": "db",
+      "args": {
+        "op": "latency.set",
+        "params": {
+          "write_ms": 2
+        }
+      }
+    },
+    {
+      "at_s": "{duration_s}",
+      "do": "load.stop"
+    },
+    {
+      "at_s": "{duration_s}",
+      "do": "end"
+    }
+  ],
+  "collect": [
+    "sagas_per_sec",
+    "latency_p50_ms",
+    "latency_p99_ms",
+    "error_rate",
+    "consumer_lag",
+    "cpu_pct",
+    "sagas_ok_total",
+    "sagas_failed_total",
+    "nodes_healthy",
+    "link.error_rate[*]",
+    "container.cpu[*]",
+    "container.mem_mb[*]"
+  ],
+  "assert": [
+    {
+      "metric": "error_rate.mean",
+      "op": "<=",
+      "value": 0.01,
+      "phase": "steady"
+    },
+    {
+      "metric": "recovery_time_s",
+      "op": "<=",
+      "value": 15
+    }
+  ]
+}

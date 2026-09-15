@@ -1,0 +1,88 @@
+{
+  "id": "t16-duplicates",
+  "name": "Duplicate delivery",
+  "description": "Duplicate a share of the messages/calls on the proxied link.",
+  "reveals": "Idempotency as a measurable requirement: duplicates deduplicated versus processed twice.",
+  "tags": [
+    "correctness"
+  ],
+  "requires": {
+    "kinds": [
+      "infra",
+      "service"
+    ],
+    "needs_proxy": true
+  },
+  "params": {
+    "rps": 40,
+    "concurrency": 64,
+    "rate": 0.3,
+    "duration_s": 60
+  },
+  "timeline": [
+    {
+      "at_s": 0,
+      "do": "load.set",
+      "args": {
+        "rps": "{rps}",
+        "concurrency": "{concurrency}"
+      }
+    },
+    {
+      "at_s": 10,
+      "do": "phase",
+      "phase": "steady"
+    },
+    {
+      "at_s": 20,
+      "do": "phase",
+      "phase": "fault"
+    },
+    {
+      "at_s": 20,
+      "do": "fault.set",
+      "edge": "proxied",
+      "args": {
+        "kind": "duplicate",
+        "rate": "{rate}",
+        "duration_s": 20
+      }
+    },
+    {
+      "at_s": 40,
+      "do": "phase",
+      "phase": "recovery"
+    },
+    {
+      "at_s": "{duration_s}",
+      "do": "load.stop"
+    },
+    {
+      "at_s": "{duration_s}",
+      "do": "end"
+    }
+  ],
+  "collect": [
+    "sagas_per_sec",
+    "latency_p50_ms",
+    "latency_p99_ms",
+    "error_rate",
+    "consumer_lag",
+    "cpu_pct",
+    "sagas_ok_total",
+    "sagas_failed_total",
+    "nodes_healthy",
+    "link.error_rate[*]",
+    "container.cpu[*]",
+    "container.mem_mb[*]"
+  ],
+  "assert": [
+    {
+      "metric": "error_rate.mean",
+      "op": "<=",
+      "value": 0.02,
+      "phase": "fault",
+      "note": "duplicates must not fail sagas"
+    }
+  ]
+}

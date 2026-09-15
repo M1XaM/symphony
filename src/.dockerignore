@@ -1,0 +1,7 @@
+# build context for blocks/Dockerfile: only what the blocks need
+*
+!go.mod
+!go.sum
+!blocks/
+blocks/**/*_test.go
+blocks/**/testdata/

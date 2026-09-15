@@ -1,6 +1,10 @@
 package spec
 
-import "fmt"
+import (
+	"fmt"
+
+	"symphony/blocks/common/behaviour"
+)
 
 // Severity of a validation finding. Errors block Apply; warnings do not.
 type Severity string
@@ -85,6 +89,22 @@ func (t Topology) Validate() []ValidationError {
 				add(p+".config", n.ID, "", fmt.Sprintf("config key %q is both hot and cold", k))
 			}
 		}
+		if n.Resources.CPUs < 0 {
+			add(p+".resources.cpus", n.ID, "", "cpus cannot be negative")
+		}
+		if n.Resources.MemoryMB < 0 || (n.Resources.MemoryMB > 0 && n.Resources.MemoryMB < 16) {
+			add(p+".resources.memory_mb", n.ID, "", "memory_mb must be 0 (unlimited) or at least 16")
+		}
+		if n.Resources.PidsMax < 0 {
+			add(p+".resources.pids_max", n.ID, "", "pids_max cannot be negative")
+		}
+		if len(n.Behaviour) > 0 {
+			if n.Kind != KindService {
+				warn(p+".behaviour", n.ID, "", fmt.Sprintf("behaviour programs only run on service nodes, %s ignores it", n.Kind))
+			} else if _, err := behaviour.Parse(n.Behaviour); err != nil {
+				add(p+".behaviour", n.ID, "", err.Error())
+			}
+		}
 	}
 
 	edgeIDs := map[string]bool{}
@@ -151,6 +171,9 @@ func (t Topology) Validate() []ValidationError {
 			if to.Kind != KindDB && to.Kind != KindBroker && to.Kind != KindProxy {
 				add(p+".to", to.ID, e.ID, "uses edges must target a db or broker (or a proxy in front of one)")
 			}
+		}
+		if e.TimeoutMs < 0 || e.Retries < 0 {
+			add(p, "", e.ID, "timeout_ms and retries cannot be negative")
 		}
 		if e.Kind.Messaging() && e.Topic != "" {
 			if _, ok := t.BrokerBehind(e); !ok {
