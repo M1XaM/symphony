@@ -14,8 +14,16 @@ export function LogsView() {
 
   useEffect(() => {
     if (!applied || !logsNode) return
-    const id = window.setInterval(() => void refreshLogs(), 2000)
-    return () => window.clearInterval(id)
+    // idem: no polling behind a hidden window
+    const tick = () => {
+      if (!document.hidden) void refreshLogs()
+    }
+    const id = window.setInterval(tick, 2000)
+    document.addEventListener('visibilitychange', tick)
+    return () => {
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', tick)
+    }
   }, [applied, logsNode, refreshLogs])
 
   useEffect(() => {

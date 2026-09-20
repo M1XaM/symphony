@@ -1,5 +1,6 @@
 import type { ComponentType } from 'react'
 import { useSymphonyStore, type DrawerTab } from '../store/useSymphonyStore'
+import { ContainersView } from './ContainersView'
 import { LogView } from './LogView'
 import { LogsView } from './LogsView'
 import { PlanView } from './PlanView'
@@ -9,6 +10,7 @@ import { TestsView } from './TestsView'
 const VIEWS: Record<DrawerTab, ComponentType> = {
   plan: PlanView,
   stats: StatsView,
+  containers: ContainersView,
   logs: LogsView,
   log: LogView,
   tests: TestsView,
@@ -17,7 +19,8 @@ const VIEWS: Record<DrawerTab, ComponentType> = {
 const TABS: { id: DrawerTab; label: string }[] = [
   { id: 'plan', label: 'Plan' },
   { id: 'stats', label: 'Stats' },
-  { id: 'logs', label: 'Containers' },
+  { id: 'containers', label: 'Containers' },
+  { id: 'logs', label: 'Node logs' },
   { id: 'log', label: 'Log' },
   { id: 'tests', label: 'Tests' },
 ]
@@ -28,9 +31,10 @@ export function Drawer() {
   const setDrawer = useSymphonyStore((s) => s.setDrawer)
   const opCount = useSymphonyStore((s) => s.plan?.ops.length ?? 0)
   const logCount = useSymphonyStore((s) => s.log.length)
+  const containerCount = useSymphonyStore((s) => s.containersRunning)
   const testRunning = useSymphonyStore((s) => s.activeTest !== null)
   const View = VIEWS[tab]
-  const counts: Partial<Record<DrawerTab, number>> = { plan: opCount, log: logCount }
+  const counts: Partial<Record<DrawerTab, number>> = { plan: opCount, log: logCount, containers: containerCount }
 
   return (
     <div className={`drawer${open ? ' is-open' : ''}`}>

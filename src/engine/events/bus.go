@@ -182,17 +182,27 @@ type FaultPayload struct {
 
 // logHistoryCap bounds the replay buffer. The frontend keeps its own cap; this
 // only has to cover the window between process start and the webview attaching.
-const logHistoryCap = 500
+const (
+	logHistoryCap = 500
+	// slack kept above the cap so trimming happens once per logHistoryTrim
+	// lines instead of on every line
+	logHistoryTrim = 128
+)
 
 // Handler receives events. Handlers are invoked synchronously on the
 // publisher's goroutine; keep them fast (the Wails forwarder only serialises).
 type Handler func(Event)
 
 // Bus fans events out to subscribers. Safe for concurrent use.
+//
+// Subscribers change once in a session; events flow through by the thousand,
+// so the handler list is kept as a slice that Publish can read as it is and
+// (un)subscribe replaces wholesale. Publish then allocates nothing.
 type Bus struct {
 	mu      sync.RWMutex
 	next    int
 	subs    map[int]Handler
+	list    []Handler // immutable snapshot of subs, rebuilt on every change
 	history []LogPayload
 }
 
@@ -206,23 +216,34 @@ func (b *Bus) Subscribe(h Handler) (unsubscribe func()) {
 	id := b.next
 	b.next++
 	b.subs[id] = h
+	b.relistLocked()
 	b.mu.Unlock()
 	return func() {
 		b.mu.Lock()
 		delete(b.subs, id)
+		b.relistLocked()
 		b.mu.Unlock()
 	}
 }
 
+// relistLocked rebuilds the snapshot Publish reads. Callers hold the lock.
+func (b *Bus) relistLocked() {
+	list := make([]Handler, 0, len(b.subs))
+	for _, h := range b.subs {
+		list = append(list, h)
+	}
+	b.list = list
+}
+
 // Publish delivers an event to every subscriber.
 func (b *Bus) Publish(t Type, payload any) {
-	ev := Event{Type: t, Time: time.Now(), Payload: payload}
 	b.mu.RLock()
-	handlers := make([]Handler, 0, len(b.subs))
-	for _, h := range b.subs {
-		handlers = append(handlers, h)
-	}
+	handlers := b.list
 	b.mu.RUnlock()
+	if len(handlers) == 0 {
+		return
+	}
+	ev := Event{Type: t, Time: time.Now(), Payload: payload}
 	for _, h := range handlers {
 		h(ev)
 	}
@@ -234,17 +255,24 @@ func (b *Bus) Publish(t Type, payload any) {
 func (b *Bus) Log(level, source, msg string) {
 	line := LogPayload{Level: level, Source: source, Message: msg, Ts: time.Now().UnixMilli()}
 	b.mu.Lock()
-	if len(b.history) >= logHistoryCap {
-		b.history = append(b.history[:0], b.history[len(b.history)-logHistoryCap+1:]...)
+	// Trim a block at a time rather than one line per line: with container
+	// logs mirrored in here, a full buffer would otherwise memmove the whole
+	// history on every single line.
+	if len(b.history) >= logHistoryCap+logHistoryTrim {
+		b.history = append(b.history[:0], b.history[len(b.history)-logHistoryCap:]...)
 	}
 	b.history = append(b.history, line)
 	b.mu.Unlock()
 	b.Publish(EngineLog, line)
 }
 
-// LogHistory returns the buffered log lines, oldest first.
+// LogHistory returns the last logHistoryCap lines, oldest first.
 func (b *Bus) LogHistory() []LogPayload {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	return append(make([]LogPayload, 0, len(b.history)), b.history...)
+	h := b.history
+	if len(h) > logHistoryCap {
+		h = h[len(h)-logHistoryCap:]
+	}
+	return append(make([]LogPayload, 0, len(h)), h...)
 }

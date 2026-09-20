@@ -72,6 +72,39 @@ type Container struct {
 	AdminAddr string
 }
 
+// HostContainer is one row of `docker ps`: what the daemon says about a
+// container, whether or not Symphony created it. Fields mirror the columns
+// the CLI prints, so the Containers tab can render them as they come.
+type HostContainer struct {
+	ID         string   `json:"id"` // short id, as the CLI prints it
+	Name       string   `json:"name"`
+	Image      string   `json:"image"`
+	Command    string   `json:"command"`
+	CreatedAt  int64    `json:"created_at"` // unix ms
+	State      string   `json:"state"`      // running | exited | paused | created | restarting | dead
+	Status     string   `json:"status"`     // "Up 3 minutes (healthy)"
+	Health     string   `json:"health,omitempty"`
+	Ports      []string `json:"ports"`
+	Networks   []string `json:"networks"`
+	Ours       bool     `json:"ours"` // carries this instance's owner label
+	Deployment string   `json:"deployment,omitempty"`
+	Node       string   `json:"node,omitempty"`
+}
+
+// HostLister is implemented by runtimes that can enumerate every container
+// on the machine rather than only their own — what `docker ps` shows.
+type HostLister interface {
+	ListHost(ctx context.Context, all bool) ([]HostContainer, error)
+}
+
+// LogFollower is implemented by runtimes that can stream a container's
+// output as it is written (Docker does; the fake has no real output). fn is
+// called once per line and must not block for long; the call returns when
+// the stream ends or ctx is cancelled.
+type LogFollower interface {
+	FollowLogs(ctx context.Context, name string, since time.Time, fn func(line string, stderr bool)) error
+}
+
 // Stats is a point-in-time resource sample.
 type Stats struct {
 	CPUPercent       float64

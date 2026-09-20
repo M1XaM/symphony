@@ -176,6 +176,40 @@ func (c *Collector) tick(ctx context.Context) {
 	c.mu.Lock()
 	c.last[""] = all
 	c.mu.Unlock()
+	c.prune(snaps)
+}
+
+// prune forgets the deltas of clients and deployments that are no longer
+// live. Without it a session that applies and tears down all evening keeps a
+// scraped document for every container it ever started.
+func (c *Collector) prune(snaps []core.DeploymentSnapshot) {
+	liveClients := map[*blockclient.Client]bool{}
+	liveDeps := map[string]bool{"": true} // "" is the all-deployments sample
+	for _, snap := range snaps {
+		liveDeps[snap.Name] = true
+		for _, n := range snap.Nodes {
+			for _, cl := range n.Clients {
+				liveClients[cl] = true
+			}
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for cl := range c.prev {
+		if !liveClients[cl] {
+			delete(c.prev, cl)
+		}
+	}
+	for name := range c.last {
+		if !liveDeps[name] {
+			delete(c.last, name)
+		}
+	}
+	for name := range c.lastLink {
+		if !liveDeps[name] {
+			delete(c.lastLink, name)
+		}
+	}
 }
 
 // --- real path -------------------------------------------------------------

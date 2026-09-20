@@ -16,8 +16,10 @@ import (
 	"symphony/engine/events"
 	"symphony/engine/hoststats"
 	"symphony/engine/library"
+	"symphony/engine/logstream"
 	"symphony/engine/metrics"
 	"symphony/engine/planner"
+	"symphony/engine/runtime"
 	"symphony/engine/spec"
 	"symphony/engine/tests"
 )
@@ -30,6 +32,7 @@ type API struct {
 	host   *hoststats.Sampler
 	col    *metrics.Collector
 	tests  *tests.Runner
+	logs   *logstream.Streamer
 	rtInfo RuntimeInfo
 	ctx    context.Context
 	unsub  func()
@@ -49,11 +52,12 @@ type Deps struct {
 	Host      *hoststats.Sampler
 	Collector *metrics.Collector
 	Tests     *tests.Runner
+	Logs      *logstream.Streamer
 	Runtime   RuntimeInfo
 }
 
 func New(d Deps) *API {
-	return &API{eng: d.Engine, bus: d.Bus, lib: d.Library, host: d.Host, col: d.Collector, tests: d.Tests, rtInfo: d.Runtime}
+	return &API{eng: d.Engine, bus: d.Bus, lib: d.Library, host: d.Host, col: d.Collector, tests: d.Tests, logs: d.Logs, rtInfo: d.Runtime}
 }
 
 // Startup wires the event bus to Wails. It is a package function rather
@@ -208,6 +212,39 @@ func (a *API) GetNodeLogs(deployment, nodeID string, n int) ([]blockclient.LogLi
 		out = []blockclient.LogLine{}
 	}
 	return out, err
+}
+
+// ListContainers returns what `docker ps` prints: every container on the
+// host, newest first with the running ones on top; all=true keeps the
+// stopped ones too (`docker ps -a`).
+func (a *API) ListContainers(all bool) ([]runtime.HostContainer, error) {
+	lister, ok := a.eng.Runtime().(runtime.HostLister)
+	if !ok {
+		return []runtime.HostContainer{}, nil
+	}
+	out, err := lister.ListHost(a.context(), all)
+	if out == nil {
+		out = []runtime.HostContainer{}
+	}
+	return out, err
+}
+
+// ContainerLogStream reports whether container output is being mirrored into
+// the app log, and whether the runtime can do it at all.
+func (a *API) ContainerLogStream() LogStreamState {
+	return LogStreamState{Available: a.logs.Available(), Enabled: a.logs.Enabled()}
+}
+
+// SetContainerLogStream turns the mirror on or off.
+func (a *API) SetContainerLogStream(on bool) LogStreamState {
+	a.logs.SetEnabled(on)
+	return a.ContainerLogStream()
+}
+
+// LogStreamState is the Log tab's view of the container log mirror.
+type LogStreamState struct {
+	Available bool `json:"available"`
+	Enabled   bool `json:"enabled"`
 }
 
 // GetMetrics returns the last metrics sample of a deployment ("" = all).

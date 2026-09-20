@@ -56,6 +56,7 @@ type FakeRuntime struct {
 var (
 	_ Runtime       = (*FakeRuntime)(nil)
 	_ StateListener = (*FakeRuntime)(nil)
+	_ HostLister    = (*FakeRuntime)(nil)
 )
 
 func NewFake(opts FakeOptions) *FakeRuntime {
@@ -371,6 +372,74 @@ func (f *FakeRuntime) List(ctx context.Context) ([]Container, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// ListHost presents the simulated containers in the shape `docker ps` uses.
+// There is no daemon behind the fake, so this is everything it knows.
+func (f *FakeRuntime) ListHost(ctx context.Context, all bool) ([]HostContainer, error) {
+	cs, err := f.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]HostContainer, 0, len(cs))
+	for _, c := range cs {
+		state, status := fakeStatus(c)
+		if !all && state != "running" && state != "paused" {
+			continue
+		}
+		out = append(out, HostContainer{
+			ID:         c.ID,
+			Name:       c.Name,
+			Image:      c.Image,
+			Command:    "/block",
+			CreatedAt:  c.CreatedAt.UnixMilli(),
+			State:      state,
+			Status:     status,
+			Health:     c.Health,
+			Ports:      []string{},
+			Networks:   []string{},
+			Ours:       true,
+			Deployment: c.Labels[LabelDeployment],
+			Node:       c.Labels[LabelNode],
+		})
+	}
+	return out, nil
+}
+
+// fakeStatus maps a simulated state onto the daemon's state/status pair.
+func fakeStatus(c Container) (state, status string) {
+	switch c.State {
+	case StatePending:
+		return "created", "Created"
+	case StatePaused:
+		return "paused", "Up " + humanDuration(time.Since(c.StartedAt)) + " (Paused)"
+	case StateStopped:
+		return "exited", fmt.Sprintf("Exited (%d) %s ago", c.ExitCode, humanDuration(time.Since(c.CreatedAt)))
+	case StateFailed:
+		return "exited", fmt.Sprintf("Exited (%d) %s ago", c.ExitCode, humanDuration(time.Since(c.CreatedAt)))
+	case StateStarting:
+		return "running", "Up " + humanDuration(time.Since(c.StartedAt)) + " (health: starting)"
+	default:
+		return "running", "Up " + humanDuration(time.Since(c.StartedAt))
+	}
+}
+
+// humanDuration is the CLI's coarse "3 minutes" rendering.
+func humanDuration(d time.Duration) string {
+	switch {
+	case d < 2*time.Second:
+		return "Less than a second"
+	case d < time.Minute:
+		return fmt.Sprintf("%d seconds", int(d.Seconds()))
+	case d < 2*time.Minute:
+		return "About a minute"
+	case d < time.Hour:
+		return fmt.Sprintf("%d minutes", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%d hours", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%d days", int(d.Hours())/24)
+	}
 }
 
 func (f *FakeRuntime) GC(ctx context.Context) (int, error) {

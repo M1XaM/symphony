@@ -1,5 +1,19 @@
 export namespace api {
 	
+	export class LogStreamState {
+	    available: boolean;
+	    enabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new LogStreamState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available = source["available"];
+	        this.enabled = source["enabled"];
+	    }
+	}
 	export class RuntimeInfo {
 	    kind: string;
 	    detail: string;
@@ -389,6 +403,47 @@ export namespace planner {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace runtime {
+	
+	export class HostContainer {
+	    id: string;
+	    name: string;
+	    image: string;
+	    command: string;
+	    created_at: number;
+	    state: string;
+	    status: string;
+	    health?: string;
+	    ports: string[];
+	    networks: string[];
+	    ours: boolean;
+	    deployment?: string;
+	    node?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new HostContainer(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.image = source["image"];
+	        this.command = source["command"];
+	        this.created_at = source["created_at"];
+	        this.state = source["state"];
+	        this.status = source["status"];
+	        this.health = source["health"];
+	        this.ports = source["ports"];
+	        this.networks = source["networks"];
+	        this.ours = source["ours"];
+	        this.deployment = source["deployment"];
+	        this.node = source["node"];
+	    }
 	}
 
 }

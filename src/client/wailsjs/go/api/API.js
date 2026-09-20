@@ -14,6 +14,10 @@ export function ClearFaults(arg1, arg2) {
   return window['go']['api']['API']['ClearFaults'](arg1, arg2);
 }
 
+export function ContainerLogStream() {
+  return window['go']['api']['API']['ContainerLogStream']();
+}
+
 export function ControlNode(arg1, arg2, arg3) {
   return window['go']['api']['API']['ControlNode'](arg1, arg2, arg3);
 }
@@ -74,6 +78,10 @@ export function InjectFault(arg1, arg2, arg3) {
   return window['go']['api']['API']['InjectFault'](arg1, arg2, arg3);
 }
 
+export function ListContainers(arg1) {
+  return window['go']['api']['API']['ListContainers'](arg1);
+}
+
 export function ListRuns() {
   return window['go']['api']['API']['ListRuns']();
 }
@@ -92,6 +100,10 @@ export function PlanApply(arg1) {
 
 export function SaveUserTemplate(arg1) {
   return window['go']['api']['API']['SaveUserTemplate'](arg1);
+}
+
+export function SetContainerLogStream(arg1) {
+  return window['go']['api']['API']['SetContainerLogStream'](arg1);
 }
 
 export function SetHotConfig(arg1, arg2, arg3) {

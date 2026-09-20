@@ -86,6 +86,21 @@ Containers keep running when the window closes and are adopted by the next
 session (`SYMPHONY_TEARDOWN_ON_EXIT=1` tears them down instead). Everything
 Symphony creates carries `symphony.owner=<instance id>` labels.
 
+### Containers and logs
+
+The **Containers** tab is `watch docker ps` inside the window: the daemon's
+own view of every container on the machine, swept once a second, with the
+ones this instance started marked (`show stopped` adds `docker ps -a`, and
+`pause` freezes the sweep while reading). The **Log** tab mirrors what
+`docker logs -f` would print for every container the engine owns — the
+blocks' JSON records flattened to one line each, stderr in red — on top of
+the engine's own events; the `docker logs` switch turns the mirror off, and
+the filter box matches source and message. Per-node buffers stay on the
+**Node logs** tab.
+
+Either side panel folds away with the arrow at the middle of its inner edge,
+leaving just that arrow to bring it back; the map takes the freed space.
+
 ### Tests tab
 
 Eighteen predefined scenarios (`src/engine/tests/scenarios/`) run a timeline

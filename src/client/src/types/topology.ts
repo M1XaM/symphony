@@ -124,6 +124,29 @@ export interface NodeStatus {
   checks?: HealthCheck[]
 }
 
+/** One row of `docker ps`, as the engine's runtime reports it. */
+export interface ContainerRow {
+  id: string
+  name: string
+  image: string
+  command: string
+  created_at: number
+  state: string
+  status: string
+  health?: string
+  ports: string[]
+  networks: string[]
+  ours: boolean
+  deployment?: string
+  node?: string
+}
+
+/** Whether container output is being mirrored into the app log. */
+export interface LogStreamState {
+  available: boolean
+  enabled: boolean
+}
+
 export interface RuntimeInfo {
   kind: 'docker' | 'fake'
   detail: string

@@ -73,42 +73,77 @@ export function Canvas() {
   const { screenToFlowPosition, fitView, setViewport } = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
 
-  const nodes = useMemo<RFNode[]>(
-    () =>
-      topology.nodes.map((n) => ({
-        id: n.id,
-        type: n.kind,
-        position: n.position,
-        selected: n.id === selectedNodeId,
-        data: { node: n, status: statuses[n.id] },
-      })),
-    [topology.nodes, statuses, selectedNodeId],
-  )
+  // Mark the whole app while the map is being moved, so the expensive chrome
+  // (panel backdrop blur, the live-edge dash) steps aside for the duration.
+  // Toggled straight on the DOM: a re-render per gesture is exactly what the
+  // frames being dropped cannot afford.
+  const moving = useRef(0)
+  const setMoving = useCallback((on: boolean) => {
+    moving.current = Math.max(0, moving.current + (on ? 1 : -1))
+    paneRef.current?.closest('.app')?.classList.toggle('is-moving', moving.current > 0)
+  }, [])
+  const onMoveStart = useCallback(() => setMoving(true), [setMoving])
+  const onMoveEnd = useCallback(() => setMoving(false), [setMoving])
+  useEffect(() => () => paneRef.current?.closest('.app')?.classList.remove('is-moving'), [])
 
-  const edges = useMemo<Edge[]>(
-    () =>
-      topology.edges.map((e) => {
-        const health = applied ? links[e.id] : undefined
-        const level: EdgeLevel = health?.level ?? 'idle'
-        let label = e.via ? `${e.topic ?? e.kind} via ${e.via}` : e.topic
-        if (health && level !== 'ok') {
-          const err = `${Math.round(health.error_rate * 100)}% lost`
-          label = label ? `${label} · ${err}` : err
-        }
-        return {
-          id: e.id,
-          source: e.from,
-          target: e.to,
-          type: 'smoothstep',
-          label,
-          selected: e.id === selectedEdgeId,
-          className: `tedge tedge-${e.kind} tedge-${level}${e.via ? ' tedge-via' : ''}${health && health.rps ? ' tedge-live' : ''}`,
-          markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: MARKER_COLOR[level] },
-          data: { kind: e.kind, via: e.via, level },
-        }
-      }),
-    [topology.edges, links, applied, selectedEdgeId],
-  )
+  // React Flow re-renders a node whenever its object changes, so hand back the
+  // very same object when nothing about that node did. Without this, one
+  // status tick — or one frame of a drag — re-rendered every node on the map.
+  const nodeCache = useRef(new Map<string, RFNode>())
+  const nodes = useMemo<RFNode[]>(() => {
+    const prev = nodeCache.current
+    const next = new Map<string, RFNode>()
+    const out = topology.nodes.map((n) => {
+      const status = statuses[n.id]
+      const selected = n.id === selectedNodeId
+      const cached = prev.get(n.id)
+      const node =
+        cached && cached.data.node === n && cached.data.status === status && cached.selected === selected
+          ? cached
+          : { id: n.id, type: n.kind, position: n.position, selected, data: { node: n, status } }
+      next.set(n.id, node)
+      return node
+    })
+    nodeCache.current = next
+    return out
+  }, [topology.nodes, statuses, selectedNodeId])
+
+  // Same for the edges, which otherwise churn twice a second on link health.
+  const edgeCache = useRef(new Map<string, Edge>())
+  const edges = useMemo<Edge[]>(() => {
+    const prev = edgeCache.current
+    const next = new Map<string, Edge>()
+    const out = topology.edges.map((e) => {
+      const health = applied ? links[e.id] : undefined
+      const level: EdgeLevel = health?.level ?? 'idle'
+      let label = e.via ? `${e.topic ?? e.kind} via ${e.via}` : e.topic
+      if (health && level !== 'ok') {
+        const err = `${Math.round(health.error_rate * 100)}% lost`
+        label = label ? `${label} · ${err}` : err
+      }
+      const selected = e.id === selectedEdgeId
+      const className = `tedge tedge-${e.kind} tedge-${level}${e.via ? ' tedge-via' : ''}${health && health.rps ? ' tedge-live' : ''}`
+      const cached = prev.get(e.id)
+      const edge: Edge =
+        cached && cached.data?.edge === e && cached.className === className && cached.label === label && cached.selected === selected
+          ? cached
+          : {
+              id: e.id,
+              source: e.from,
+              target: e.to,
+              type: 'smoothstep',
+              label,
+              selected,
+              className,
+              markerEnd: { type: MarkerType.ArrowClosed, width: 16, height: 16, color: MARKER_COLOR[level] },
+              data: { kind: e.kind, via: e.via, level, edge: e },
+            }
+      next.set(e.id, edge)
+      return edge
+    })
+    edgeCache.current = next
+    return out
+  }, [topology.edges, links, applied, selectedEdgeId])
 
   /** Fit the graph into the band the floating panels leave clear. Used on load
    *  and by the controls' fit button, which would otherwise centre on the whole
@@ -220,6 +255,10 @@ export function Canvas() {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onMoveStart={onMoveStart}
+        onMoveEnd={onMoveEnd}
+        onNodeDragStart={onMoveStart}
+        onNodeDragStop={onMoveEnd}
         onPaneClick={() => {
           select(null)
           selectEdge(null)

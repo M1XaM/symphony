@@ -6,6 +6,7 @@ import {
   fromWireTopology,
   toWireFault,
   toWireTopology,
+  type ContainerRow,
   type ControlCommand,
   type ControlResult,
   type DeploymentInfo,
@@ -13,6 +14,7 @@ import {
   type HostStatsEvent,
   type LogEvent,
   type LogLine,
+  type LogStreamState,
   type MetricsEvent,
   type Plan,
   type Resources,
@@ -110,6 +112,17 @@ export const backend = {
   async getNodeLogs(deployment: string, nodeId: string, n: number): Promise<LogLine[]> {
     const lines = await API.GetNodeLogs(deployment, nodeId, n)
     return JSON.parse(JSON.stringify(lines)) as LogLine[]
+  },
+  /** `docker ps`: every container on the host (all = `docker ps -a`). */
+  async listContainers(all: boolean): Promise<ContainerRow[]> {
+    const rows = await API.ListContainers(all)
+    return JSON.parse(JSON.stringify(rows)) as ContainerRow[]
+  },
+  async containerLogStream(): Promise<LogStreamState> {
+    return (await API.ContainerLogStream()) as unknown as LogStreamState
+  },
+  async setContainerLogStream(on: boolean): Promise<LogStreamState> {
+    return (await API.SetContainerLogStream(on)) as unknown as LogStreamState
   },
   getMetrics(deployment: string): Promise<MetricsEvent> {
     return API.GetMetrics(deployment) as unknown as Promise<MetricsEvent>

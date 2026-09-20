@@ -8,6 +8,7 @@ import {
   SCHEMA_VERSION,
   defaultConfig,
   type ConfigValue,
+  type ContainerRow,
   type ContainerStatsEvent,
   type ControlCommand,
   type ControlResult,
@@ -17,6 +18,7 @@ import {
   type LinkHealthEvent,
   type LogEvent,
   type LogLine,
+  type LogStreamState,
   type MetricsEvent,
   type NodeKind,
   type NodeStatus,
@@ -48,7 +50,10 @@ export interface LogLineEntry {
   message: string
 }
 
-export type DrawerTab = 'plan' | 'stats' | 'logs' | 'log' | 'tests'
+export type DrawerTab = 'plan' | 'stats' | 'containers' | 'logs' | 'log' | 'tests'
+
+/** The two floating panels that can be folded away to clear the map. */
+export type PanelSide = 'left' | 'right'
 
 /** The two halves of the left panel's slider. */
 export type LeftTab = 'elements' | 'templates'
@@ -82,7 +87,11 @@ export interface SimSample {
   mem_mb: number
 }
 
-const LOG_CAP = 500
+const LOG_CAP = 2000
+/** Container output arrives line by line; rendering the tab once per line is
+ *  what makes a busy deployment feel slow, so lines are collected and handed
+ *  to React in one batch per frame-ish interval. */
+const LOG_FLUSH_MS = 100
 /** Host samples kept for the Stats tab: one per second. */
 const HOST_STATS_CAP = 180
 const HOT_DEBOUNCE_MS = 150
@@ -109,6 +118,8 @@ interface SymphonyState {
   simHistory: Record<string, SimSample[]>
   drawerOpen: boolean
   drawerTab: DrawerTab
+  /** Folded-away side panels; only their reopen arrow stays on screen. */
+  panelOpen: Record<PanelSide, boolean>
   leftTab: LeftTab
   /** Templates the user built, stacked on top of the built-in `presets`. */
   userTemplates: Topology[]
@@ -116,6 +127,15 @@ interface SymphonyState {
   /** Logs tab: which node and what it said. */
   logsNode: string | null
   nodeLogs: LogLine[]
+  /** Containers tab: the last `docker ps` sweep. */
+  containers: ContainerRow[]
+  /** How many of them are running, kept with the rows so the tab badge is a
+   *  field read rather than a scan on every store update. */
+  containersRunning: number
+  containersAll: boolean
+  containersError: string | null
+  /** Whether container output is mirrored into the Log tab. */
+  logStream: LogStreamState
   /** Tests tab. */
   scenarios: Scenario[]
   runs: RunSummary[]
@@ -148,9 +168,13 @@ interface SymphonyState {
   control(id: string, cmd: ControlCommand): Promise<ControlResult | null>
   setLogsNode(id: string | null): void
   refreshLogs(): Promise<void>
+  refreshContainers(): Promise<void>
+  setContainersAll(all: boolean): void
+  setLogStream(on: boolean): Promise<void>
   appendLog(line: Omit<LogLineEntry, 'id'>): void
   clearLog(): void
   setDrawer(open: boolean, tab?: DrawerTab): void
+  togglePanel(side: PanelSide): void
   setLeftTab(tab: LeftTab): void
   startTemplate(): void
   saveTemplate(): Promise<void>
@@ -165,6 +189,23 @@ interface SymphonyState {
 }
 
 let logSeq = 0
+/** Lines waiting for the next flush; see LOG_FLUSH_MS. */
+let pendingLines: LogLineEntry[] = []
+let logFlush: ReturnType<typeof setTimeout> | null = null
+
+function flushLog(): void {
+  logFlush = null
+  if (pendingLines.length === 0) return
+  const batch = pendingLines.length > LOG_CAP ? pendingLines.slice(-LOG_CAP) : pendingLines
+  pendingLines = []
+  useSymphonyStore.setState((s) => {
+    const keep = Math.max(0, s.log.length + batch.length - LOG_CAP)
+    const next = keep > 0 ? s.log.slice(keep) : s.log.slice()
+    for (const l of batch) next.push(l)
+    return { log: next }
+  })
+}
+
 /** Shared empty maps, so selectors on a non-applied topology keep a stable reference. */
 const NO_STATUSES: Record<string, NodeStatus> = {}
 const NO_LINKS: Record<string, LinkHealthEntry> = {}
@@ -192,6 +233,15 @@ function patchDeployment(
 function dropDeployment(deployments: Record<string, Deployment>, name: string): Record<string, Deployment> {
   if (!(name in deployments)) return deployments
   const next = { ...deployments }
+  delete next[name]
+  return next
+}
+
+/** Drop a gone deployment's chart samples with it, so re-applying the same
+ *  template starts from an empty chart instead of the last run's tail. */
+function dropHistory(history: Record<string, SimSample[]>, name: string): Record<string, SimSample[]> {
+  if (!(name in history)) return history
+  const next = { ...history }
   delete next[name]
   return next
 }
@@ -301,11 +351,17 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
   simHistory: {},
   drawerOpen: true,
   drawerTab: 'plan',
+  panelOpen: { left: true, right: true },
   leftTab: 'elements',
   userTemplates: readTemplates(),
   draft: null,
   logsNode: null,
   nodeLogs: [],
+  containers: [],
+  containersRunning: 0,
+  containersAll: false,
+  containersError: null,
+  logStream: { available: false, enabled: false },
   scenarios: [],
   runs: [],
   activeTest: null,
@@ -345,12 +401,11 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
       get().appendLog({ ts: l.ts || Date.now(), level: l.level, source: l.source, message: l.message })
     })
     onEvent<PhaseEvent>('engine:phase', (p) => {
-      set((s) => ({
-        deployments:
-          p.phase === 'gone'
-            ? dropDeployment(s.deployments, p.deployment)
-            : patchDeployment(s.deployments, p.deployment, () => ({ phase: p.phase as Phase })),
-      }))
+      set((s) =>
+        p.phase === 'gone'
+          ? { deployments: dropDeployment(s.deployments, p.deployment), simHistory: dropHistory(s.simHistory, p.deployment) }
+          : { deployments: patchDeployment(s.deployments, p.deployment, () => ({ phase: p.phase as Phase })) },
+      )
     })
     onEvent<NodeStatusEvent>('node:status', (st) => {
       set((s) => ({
@@ -463,6 +518,12 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
       writeTemplates(stored)
     } catch (err) {
       warn('library', err)
+    }
+
+    try {
+      set({ logStream: await backend.containerLogStream() })
+    } catch (err) {
+      warn('logs', err)
     }
 
     try {
@@ -712,7 +773,12 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
     }))
     try {
       await backend.teardown(name)
-      set((s) => ({ plan: null, opStatus: {}, deployments: dropDeployment(s.deployments, name) }))
+      set((s) => ({
+        plan: null,
+        opStatus: {},
+        deployments: dropDeployment(s.deployments, name),
+        simHistory: dropHistory(s.simHistory, name),
+      }))
     } catch (err) {
       get().appendLog({ ts: Date.now(), level: 'error', source: 'teardown', message: `[${name}] ${errorMessage(err)}` })
       set((s) => ({
@@ -765,20 +831,50 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
     }
   },
 
+  /** One `docker ps` sweep. The Containers tab calls this on a timer, which
+   *  is the `watch docker ps` it stands in for. */
+  async refreshContainers() {
+    if (!hasBackend()) return
+    try {
+      const rows = await backend.listContainers(get().containersAll)
+      let running = 0
+      for (const r of rows) if (r.state === 'running') running++
+      set({ containers: rows, containersRunning: running, containersError: null })
+    } catch (err) {
+      set({ containersError: errorMessage(err) })
+    }
+  },
+
+  setContainersAll(all) {
+    set({ containersAll: all })
+    void get().refreshContainers()
+  },
+
+  async setLogStream(on) {
+    if (!hasBackend()) return
+    try {
+      set({ logStream: await backend.setContainerLogStream(on) })
+    } catch (err) {
+      warn('logs', err)
+    }
+  },
+
   appendLog(line) {
-    set((s) => {
-      const next = s.log.length >= LOG_CAP ? s.log.slice(s.log.length - LOG_CAP + 1) : s.log.slice()
-      next.push({ id: ++logSeq, ...line })
-      return { log: next }
-    })
+    pendingLines.push({ id: ++logSeq, ...line })
+    if (logFlush === null) logFlush = setTimeout(flushLog, LOG_FLUSH_MS)
   },
 
   clearLog() {
+    pendingLines.length = 0
     set({ log: [] })
   },
 
   setDrawer(open, tab) {
     set((s) => ({ drawerOpen: open, drawerTab: tab ?? s.drawerTab }))
+  },
+
+  togglePanel(side) {
+    set((s) => ({ panelOpen: { ...s.panelOpen, [side]: !s.panelOpen[side] } }))
   },
 
   setLeftTab(tab) {

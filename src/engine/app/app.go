@@ -23,6 +23,7 @@ import (
 	"symphony/engine/hoststats"
 	"symphony/engine/images"
 	"symphony/engine/library"
+	"symphony/engine/logstream"
 	"symphony/engine/metrics"
 	"symphony/engine/runtime"
 	"symphony/engine/tests"
@@ -115,12 +116,13 @@ func Run(opts Options) error {
 	col := metrics.NewCollector(bus, 500*time.Millisecond, eng)
 	host := hoststats.New(bus, time.Second)
 	runner := tests.NewRunner(eng, bus, configDir, info.Kind)
+	conlogs := logstream.New(rt, bus)
 
 	libPath, err := library.DefaultPath()
 	if err != nil {
 		bus.Log("warn", "library", err.Error()+" — saved templates will not persist")
 	}
-	bound := api.New(api.Deps{Engine: eng, Bus: bus, Library: library.New(libPath), Host: host, Collector: col, Tests: runner, Runtime: info})
+	bound := api.New(api.Deps{Engine: eng, Bus: bus, Library: library.New(libPath), Host: host, Collector: col, Tests: runner, Logs: conlogs, Runtime: info})
 
 	return wails.Run(&options.App{
 		Title:     opts.Title,
@@ -145,6 +147,7 @@ func Run(opts Options) error {
 			eng.Start(ctx)
 			col.Start(ctx)
 			host.Start(ctx)
+			conlogs.Start(ctx)
 		},
 		OnShutdown: func(ctx context.Context) {
 			if opts.TeardownOnExit {
@@ -152,6 +155,7 @@ func Run(opts Options) error {
 				eng.TeardownAll(tctx)
 				cancel()
 			}
+			conlogs.Stop()
 			host.Stop()
 			col.Stop()
 			eng.Stop()

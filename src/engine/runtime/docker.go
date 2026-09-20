@@ -32,6 +32,10 @@ const (
 	LabelTopology   = "symphony.topology"
 )
 
+// adminContainerPort is the port every block serves its admin API on inside
+// the container; the engine publishes it on the host loopback.
+const adminContainerPort = 9090
+
 // DockerRuntime drives the Docker Engine API. Every object it creates
 // carries LabelOwner=owner.
 type DockerRuntime struct {
@@ -47,6 +51,8 @@ type DockerRuntime struct {
 var (
 	_ Runtime       = (*DockerRuntime)(nil)
 	_ StateListener = (*DockerRuntime)(nil)
+	_ HostLister    = (*DockerRuntime)(nil)
+	_ LogFollower   = (*DockerRuntime)(nil)
 )
 
 // NewDocker connects to the daemon (DOCKER_HOST or the platform default)
@@ -372,7 +378,7 @@ func fromInspect(c container.InspectResponse) Container {
 	}
 	if c.NetworkSettings != nil {
 		for port, bindings := range c.NetworkSettings.Ports {
-			if port.Num() == 9090 && len(bindings) > 0 {
+			if port.Num() == adminContainerPort && len(bindings) > 0 {
 				out.AdminAddr = net.JoinHostPort(bindings[0].HostIP.String(), bindings[0].HostPort)
 			}
 		}
@@ -473,6 +479,134 @@ func (d *DockerRuntime) Logs(ctx context.Context, name string, tail int) ([]stri
 	return lines, nil
 }
 
+// FollowLogs streams one container's output until it stops or ctx ends.
+// Only lines written after `since` are delivered, so a reconnect does not
+// replay what the caller already has.
+func (d *DockerRuntime) FollowLogs(ctx context.Context, name string, since time.Time, fn func(line string, stderr bool)) error {
+	opts := client.ContainerLogsOptions{ShowStdout: true, ShowStderr: true, Follow: true, Tail: "0"}
+	if !since.IsZero() {
+		opts.Since = since.UTC().Format(time.RFC3339Nano)
+		opts.Tail = "all"
+	}
+	res, err := d.cli.ContainerLogs(ctx, name, opts)
+	if err != nil {
+		return wrapNotFound(name, "logs", err)
+	}
+	defer res.Close()
+
+	// The stream multiplexes stdout and stderr; split it so the caller can
+	// tell a panic from a log line.
+	outR, outW := io.Pipe()
+	errR, errW := io.Pipe()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go scanLines(outR, false, fn, &wg)
+	go scanLines(errR, true, fn, &wg)
+	_, copyErr := stdcopy.StdCopy(outW, errW, res)
+	outW.CloseWithError(copyErr)
+	errW.CloseWithError(copyErr)
+	wg.Wait()
+	if copyErr != nil && ctx.Err() == nil && !errors.Is(copyErr, io.EOF) {
+		return fmt.Errorf("container logs %s: %w", name, copyErr)
+	}
+	return ctx.Err()
+}
+
+func scanLines(r io.Reader, stderr bool, fn func(string, bool), wg *sync.WaitGroup) {
+	defer wg.Done()
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 64<<10), 1<<20)
+	for sc.Scan() {
+		if line := sc.Text(); line != "" {
+			fn(line, stderr)
+		}
+	}
+	_, _ = io.Copy(io.Discard, r) // drain, so StdCopy never blocks on a closed side
+}
+
+// ListHost reports every container on the machine the way `docker ps` does;
+// all includes the stopped ones (`docker ps -a`).
+func (d *DockerRuntime) ListHost(ctx context.Context, all bool) ([]HostContainer, error) {
+	res, err := d.cli.ContainerList(ctx, client.ContainerListOptions{All: all})
+	if err != nil {
+		return nil, fmt.Errorf("container list: %w", err)
+	}
+	out := make([]HostContainer, 0, len(res.Items))
+	for _, s := range res.Items {
+		out = append(out, d.hostContainer(s))
+	}
+	// running first (that is what the tab is for), then newest first
+	sort.SliceStable(out, func(i, j int) bool {
+		if (out[i].State == "running") != (out[j].State == "running") {
+			return out[i].State == "running"
+		}
+		return out[i].CreatedAt > out[j].CreatedAt
+	})
+	return out, nil
+}
+
+func (d *DockerRuntime) hostContainer(s container.Summary) HostContainer {
+	c := HostContainer{
+		ID:         shortID(s.ID),
+		Image:      s.Image,
+		Command:    s.Command,
+		CreatedAt:  s.Created * 1000,
+		State:      string(s.State),
+		Status:     s.Status,
+		Ports:      portStrings(s.Ports),
+		Ours:       s.Labels[LabelOwner] == d.owner,
+		Deployment: s.Labels[LabelDeployment],
+		Node:       s.Labels[LabelNode],
+	}
+	if len(s.Names) > 0 {
+		c.Name = strings.TrimPrefix(s.Names[0], "/")
+	}
+	if s.Health != nil {
+		c.Health = string(s.Health.Status)
+	}
+	if s.NetworkSettings != nil {
+		for n := range s.NetworkSettings.Networks {
+			c.Networks = append(c.Networks, n)
+		}
+		sort.Strings(c.Networks)
+	}
+	return c
+}
+
+func shortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
+}
+
+// portStrings renders the port mappings the way the CLI's PORTS column does.
+func portStrings(ports []container.PortSummary) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(ports))
+	for _, p := range ports {
+		s := fmt.Sprintf("%d/%s", p.PrivatePort, p.Type)
+		if p.PublicPort > 0 {
+			host := "0.0.0.0"
+			if p.IP.IsValid() {
+				host = p.IP.String()
+			}
+			s = fmt.Sprintf("%s->%s", net.JoinHostPort(host, fmt.Sprint(p.PublicPort)), s)
+		}
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// List reports this instance's containers. The list endpoint already carries
+// everything a running container needs, so it is one call for all of them;
+// only a container that is no longer running is inspected, because its exit
+// code and OOM flag — which tell a clean stop from a crash — are the one
+// thing the summary leaves out.
 func (d *DockerRuntime) List(ctx context.Context) ([]Container, error) {
 	res, err := d.cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: d.ownerFilter()})
 	if err != nil {
@@ -480,14 +614,79 @@ func (d *DockerRuntime) List(ctx context.Context) ([]Container, error) {
 	}
 	out := make([]Container, 0, len(res.Items))
 	for _, s := range res.Items {
-		c, err := d.Inspect(ctx, s.ID)
-		if err != nil {
-			continue
+		c := fromSummary(s)
+		if s.State != container.StateRunning && s.State != container.StatePaused {
+			if full, err := d.Inspect(ctx, s.ID); err == nil {
+				c = full
+			}
 		}
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// fromSummary reads a container out of the list endpoint's row.
+func fromSummary(s container.Summary) Container {
+	c := Container{ID: s.ID, Image: s.Image, Labels: s.Labels, Health: "none", CreatedAt: time.Unix(s.Created, 0)}
+	if len(s.Names) > 0 {
+		c.Name = strings.TrimPrefix(s.Names[0], "/")
+	}
+	if s.Health != nil {
+		c.Health = string(s.Health.Status)
+	}
+	c.State = mapSummaryState(s.State, c.Health)
+	c.AdminAddr = adminAddr(s.Ports)
+	return c
+}
+
+// mapSummaryState folds the list endpoint's status and health into a State.
+// The exited cases are the coarse reading; List inspects those for the exact
+// one.
+func mapSummaryState(s container.ContainerState, health string) State {
+	switch s {
+	case container.StateCreated:
+		return StatePending
+	case container.StatePaused:
+		return StatePaused
+	case container.StateRunning:
+		switch health {
+		case "healthy":
+			return StateHealthy
+		case "unhealthy":
+			return StateFailed
+		case "starting":
+			return StateStarting
+		}
+		return StateHealthy // no healthcheck configured
+	case container.StateRestarting:
+		return StateStarting
+	case container.StateExited, container.StateDead, container.StateRemoving:
+		return StateStopped
+	}
+	return StateStopped
+}
+
+// adminAddr picks the host side of the published admin port, preferring the
+// IPv4 binding the engine asks for over the daemon's IPv6 twin.
+func adminAddr(ports []container.PortSummary) string {
+	addr := ""
+	for _, p := range ports {
+		if p.PrivatePort != adminContainerPort || p.PublicPort == 0 {
+			continue
+		}
+		host := "127.0.0.1"
+		if p.IP.IsValid() {
+			host = p.IP.String()
+		}
+		if addr == "" || p.IP.Is4() {
+			addr = net.JoinHostPort(host, fmt.Sprint(p.PublicPort))
+		}
+		if p.IP.Is4() {
+			break
+		}
+	}
+	return addr
 }
 
 func (d *DockerRuntime) GC(ctx context.Context) (int, error) {

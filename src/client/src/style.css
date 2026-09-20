@@ -31,6 +31,9 @@
   --toolbar-h: 38px;
   --drawer-h: 230px;
   --panel-bg: rgba(23, 24, 28, 0.93);
+  /* what a panel falls back to while the map moves: blurring a backdrop that
+     is being repainted every frame is what made panning feel like treacle */
+  --panel-solid: #191a1e;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
 }
 
@@ -119,14 +122,79 @@ button {
   grid-row: 1;
 }
 
-.panel-left {
+.slot {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  pointer-events: none;
+}
+
+.slot > .panel {
+  flex: 1;
+  min-width: 0;
+}
+
+.slot-left {
   grid-column: 1;
   grid-row: 2;
 }
 
-.panel-right {
+.slot-right {
   grid-column: 3;
   grid-row: 2;
+}
+
+/* fold handle: middle of the panel's inner edge, and all that is left of the
+   panel once it is folded (the slot is then zero-wide, so it lands on the
+   window edge without moving anywhere else) */
+.panel-toggle {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 46px;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-bg);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow);
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.panel-toggle:hover {
+  border-color: var(--line-strong);
+  color: var(--fg);
+}
+
+.slot-left .panel-toggle {
+  left: 100%;
+  margin-left: 4px;
+}
+
+.slot-right .panel-toggle {
+  right: 100%;
+  margin-right: 4px;
+}
+
+/* a folded panel takes no column, so the map (and the zoom controls, which
+   read the same variables) get the space back */
+.app.left-folded {
+  --panel-left-w: 0px;
+}
+
+.app.right-folded {
+  --panel-right-w: 0px;
 }
 
 .panel-bottom {
@@ -723,6 +791,29 @@ input[type='checkbox'] {
 .canvas {
   position: absolute;
   inset: 0;
+  /* the map is a world of its own: nothing inside it can force the panels to
+     lay out or repaint while it pans */
+  contain: layout paint;
+}
+
+/* While the viewport is being dragged or zoomed every frame repaints the whole
+   pane. Blurring four panel-sized backdrops and animating the live edges on
+   top of that is what made the map feel like it moved in slow motion, so both
+   stand down until the gesture ends — the still frames keep the glass look. */
+.app.is-moving .panel,
+.app.is-moving .panel-toggle {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: var(--panel-solid);
+}
+
+.app.is-moving .react-flow__edge.tedge-live path.react-flow__edge-path {
+  animation: none;
+}
+
+.app.is-moving .react-flow__edge.tedge path.react-flow__edge-path,
+.app.is-moving .tnode {
+  transition: none;
 }
 
 .react-flow {
@@ -1603,4 +1694,154 @@ input[type='checkbox'] {
   .react-flow__edge.tedge-live path.react-flow__edge-path {
     animation: none;
   }
+}
+
+/* --- containers tab: live `docker ps` -------------------------------------- */
+
+.ps {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.ps-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ps-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.ps-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  user-select: text;
+}
+
+.ps-empty {
+  padding: 8px 10px;
+}
+
+.ps-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  table-layout: fixed;
+}
+
+.ps-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-1);
+  text-align: left;
+  font-family: var(--font);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.ps-table td {
+  overflow: hidden;
+  padding: 2px 8px;
+  border-top: 1px solid var(--line);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ps-table th:nth-child(1),
+.ps-table td:nth-child(1) {
+  width: 106px;
+}
+
+.ps-table th:nth-child(4),
+.ps-table td:nth-child(4) {
+  width: 84px;
+}
+
+.ps-table th:nth-child(5),
+.ps-table td:nth-child(5) {
+  width: 250px;
+}
+
+.ps-id,
+.ps-created {
+  color: var(--fg-dim);
+}
+
+.ps-image,
+.ps-ports {
+  color: var(--fg-muted);
+}
+
+.ps-row.is-ours .ps-name {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.ps-mine {
+  margin-left: 5px;
+  color: var(--accent);
+  font-size: 9px;
+  vertical-align: middle;
+}
+
+.ps-state {
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.ps-state-running {
+  color: var(--ok);
+}
+
+.ps-state-paused,
+.ps-state-created,
+.ps-state-restarting {
+  color: var(--warn);
+}
+
+.ps-state-exited,
+.ps-state-dead,
+.ps-state-removing {
+  color: var(--err);
+}
+
+.ps-row.ps-exited td,
+.ps-row.ps-dead td {
+  opacity: 0.6;
+}
+
+/* log tab tools */
+.log-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.log-filter {
+  width: 140px;
+  font-size: 11.5px;
+}
+
+/* container lines carry their container name, which is wider than "engine" */
+.log-src {
+  width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
