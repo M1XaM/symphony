@@ -16,7 +16,6 @@ const (
 	HeaderHop      = "X-Symphony-Hop"
 	HeaderDeadline = "X-Symphony-Deadline" // unix milliseconds
 	HeaderAttempt  = "X-Symphony-Attempt"
-	HeaderOutcome  = "X-Symphony-Outcome" // ok | failed | compensated, set by the node that decides a saga's fate
 	HeaderStep     = "X-Symphony-Step"
 )
 
@@ -89,12 +88,4 @@ func WriteMeta(h http.Header, m Meta) {
 	if !m.Deadline.IsZero() {
 		h.Set(HeaderDeadline, strconv.FormatInt(m.Deadline.UnixMilli(), 10))
 	}
-}
-
-// Remaining is the time left until the deadline, or def when there is none.
-func (m Meta) Remaining(def time.Duration) time.Duration {
-	if m.Deadline.IsZero() {
-		return def
-	}
-	return time.Until(m.Deadline)
 }

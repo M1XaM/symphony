@@ -86,19 +86,6 @@ func (r *Registry) Register(name string, fn Func) {
 	r.funcs[name] = fn
 }
 
-// Unregister removes a check.
-func (r *Registry) Unregister(name string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.funcs, name)
-	for i, n := range r.names {
-		if n == name {
-			r.names = append(r.names[:i], r.names[i+1:]...)
-			break
-		}
-	}
-}
-
 // Document evaluates every check.
 func (r *Registry) Document() Document {
 	r.mu.Lock()

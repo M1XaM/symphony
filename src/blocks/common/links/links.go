@@ -99,16 +99,6 @@ func Parse(b []byte) (Set, error) {
 	return s, nil
 }
 
-// Inbound looks an inbound link up by edge id.
-func (s Set) Inbound(edge string) (Link, bool) {
-	for _, l := range s.In {
-		if l.Edge == edge {
-			return l, true
-		}
-	}
-	return Link{}, false
-}
-
 // Outbound looks an outbound link up by edge id.
 func (s Set) Outbound(edge string) (Link, bool) {
 	for _, l := range s.Out {

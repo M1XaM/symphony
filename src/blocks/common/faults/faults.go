@@ -245,11 +245,6 @@ type Decision struct {
 	Cause string
 }
 
-// Affected reports whether any fault changed the request's fate.
-func (d Decision) Affected() bool {
-	return d.Partitioned || d.Rejected || d.Dropped || d.ErrorStatus != 0 || d.Delay > 0 || d.Hang || d.BytesPerSec > 0 || d.Corrupt || d.Duplicate
-}
-
 // Decide rolls the dice for one request against the scope's faults.
 func (s *Store) Decide(scope Scope, rng *rand.Rand) Decision {
 	var d Decision

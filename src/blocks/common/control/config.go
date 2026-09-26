@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"sort"
 	"sync"
 	"time"
 )
@@ -130,18 +129,6 @@ func (c *Config) All() map[string]any {
 		out[k] = v
 	}
 	return out
-}
-
-// Keys returns the defined keys, sorted.
-func (c *Config) Keys() []string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	keys := make([]string, 0, len(c.defined))
-	for k := range c.defined {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func (c *Config) get(key string) (any, bool) {
