@@ -885,10 +885,6 @@ input[type='checkbox'] {
   stroke: var(--accent);
 }
 
-.react-flow__controls {
-  box-shadow: none;
-}
-
 /* custom node */
 .tnode {
   width: 172px;
@@ -1415,10 +1411,6 @@ input[type='checkbox'] {
   background: var(--warn);
 }
 
-.dot-failing {
-  background: var(--err);
-}
-
 .pill-runtime-docker {
   color: var(--ok);
   border-color: var(--ok);
@@ -1506,8 +1498,7 @@ input[type='checkbox'] {
   vertical-align: middle;
 }
 
-.log-info .log-msg,
-.log-INFO .log-msg {
+.log-info .log-msg {
   color: var(--fg);
 }
 

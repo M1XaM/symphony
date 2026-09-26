@@ -1,4 +1,4 @@
-// TypeScript mirror of internal/spec, internal/planner and internal/engine.
+// TypeScript mirror of engine/spec, engine/planner and engine/core.
 //
 // The Wails generator emits classes in ../../wailsjs/go/models.ts; those are
 // used at the binding boundary (see lib/backend.ts). UI state uses the plain
@@ -7,9 +7,8 @@
 import { planner, spec } from '../../wailsjs/go/models'
 
 export type NodeKind = 'service' | 'broker' | 'db' | 'proxy' | 'infra'
-export const NODE_KINDS: readonly NodeKind[] = ['service', 'broker', 'db', 'proxy', 'infra']
 
-export type EdgeKind = 'publishes' | 'subscribes' | 'calls' | 'uses'
+type EdgeKind = 'publishes' | 'subscribes' | 'calls' | 'uses'
 
 export type ConfigValue = number | string | boolean
 
@@ -189,17 +188,16 @@ export interface DeploymentInfo {
 
 // --- planner ---------------------------------------------------------------
 
-export type OpKind = 'ensure_network' | 'create' | 'wait_healthy' | 'ensure_topic' | 'control' | 'destroy'
-export type ChangeClass = 'hot' | 'cold' | 'structural'
+type OpKind = 'ensure_network' | 'create' | 'wait_healthy' | 'ensure_topic' | 'control' | 'destroy'
+type ChangeClass = 'hot' | 'cold' | 'structural'
 export type Plan = planner.Plan
-export type PlanOperation = planner.Operation
 export type OpStatus = 'started' | 'done' | 'failed'
 
 // --- validation / faults ---------------------------------------------------
 
 export type ValidationError = spec.ValidationError
 
-export type FaultKind =
+type FaultKind =
   | 'kill'
   | 'pause'
   | 'partition'
@@ -222,7 +220,7 @@ export interface FaultSpec {
   params: Record<string, unknown>
 }
 
-// --- event payloads (mirror internal/events) --------------------------------
+// --- event payloads (mirror engine/events) ----------------------------------
 
 export interface ProgressEvent {
   deployment: string
@@ -331,7 +329,7 @@ export interface TestDoneEvent {
 
 // --- tests -----------------------------------------------------------------
 
-export interface ScenarioStep {
+interface ScenarioStep {
   at_s: unknown
   do: string
   phase?: string
@@ -368,7 +366,7 @@ export interface RunSummary {
   running?: boolean
 }
 
-export interface RunPoint {
+interface RunPoint {
   t: number
   v: number
 }
@@ -381,14 +379,6 @@ export interface Run extends RunSummary {
   summary: Record<string, number>
   assertions: { metric: string; op: string; value: number; phase?: string; note?: string; actual: number; passed: boolean }[]
   notes: string[]
-}
-
-export interface FaultEvent {
-  deployment: string
-  node_id: string
-  kind: FaultKind
-  duration_ms: number
-  active: boolean
 }
 
 // --- boundary conversions --------------------------------------------------

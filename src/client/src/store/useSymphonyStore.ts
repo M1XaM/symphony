@@ -56,10 +56,10 @@ export type DrawerTab = 'plan' | 'stats' | 'containers' | 'logs' | 'log' | 'test
 export type PanelSide = 'left' | 'right'
 
 /** The two halves of the left panel's slider. */
-export type LeftTab = 'elements' | 'templates'
+type LeftTab = 'elements' | 'templates'
 
 /** Set while the left panel is in its "build a template" state. */
-export interface TemplateDraft {
+interface TemplateDraft {
   /** Topology to put back on the canvas if the build is cancelled. */
   restore: Topology
 }
@@ -1008,7 +1008,7 @@ export function selectSelectedEdge(s: SymphonyState): TopologyEdge | null {
 }
 
 /** The deployment of the topology on the canvas, if the engine is running it. */
-export function selectDeployment(s: SymphonyState): Deployment | undefined {
+function selectDeployment(s: SymphonyState): Deployment | undefined {
   return s.deployments[s.topology.name]
 }
 

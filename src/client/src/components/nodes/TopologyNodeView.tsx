@@ -3,7 +3,7 @@ import { KIND_LABEL } from '../../lib/format'
 import type { NodeKind, NodeStatus, TopologyNode } from '../../types/topology'
 import { StatusDot } from '../StatusDot'
 
-export type RFNodeData = { node: TopologyNode; status?: NodeStatus }
+type RFNodeData = { node: TopologyNode; status?: NodeStatus }
 export type RFNode = Node<RFNodeData, NodeKind>
 
 /** One component renders every kind; the kind only changes the header colour. */
