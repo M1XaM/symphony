@@ -30,14 +30,6 @@ export function DeleteUserTemplate(arg1) {
   return window['go']['api']['API']['DeleteUserTemplate'](arg1);
 }
 
-export function ExportRun(arg1) {
-  return window['go']['api']['API']['ExportRun'](arg1);
-}
-
-export function FaultKinds() {
-  return window['go']['api']['API']['FaultKinds']();
-}
-
 export function GetDeployments() {
   return window['go']['api']['API']['GetDeployments']();
 }
@@ -48,10 +40,6 @@ export function GetHostStats() {
 
 export function GetLogHistory() {
   return window['go']['api']['API']['GetLogHistory']();
-}
-
-export function GetMetrics(arg1) {
-  return window['go']['api']['API']['GetMetrics'](arg1);
 }
 
 export function GetNodeLogs(arg1, arg2, arg3) {
@@ -88,10 +76,6 @@ export function ListRuns() {
 
 export function ListScenarios() {
   return window['go']['api']['API']['ListScenarios']();
-}
-
-export function NewNode(arg1, arg2, arg3) {
-  return window['go']['api']['API']['NewNode'](arg1, arg2, arg3);
 }
 
 export function PlanApply(arg1) {

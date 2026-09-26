@@ -262,40 +262,6 @@ export namespace events {
 	        this.ts = source["ts"];
 	    }
 	}
-	export class MetricsPayload {
-	    deployment: string;
-	    ts: number;
-	    latency_ms: number;
-	    p99_ms: number;
-	    consumer_lag: number;
-	    sagas_per_sec: number;
-	    error_rate: number;
-	    cpu_pct: number;
-	    active_faults: number;
-	    sagas_ok: number;
-	    sagas_failed: number;
-	    source: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new MetricsPayload(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.deployment = source["deployment"];
-	        this.ts = source["ts"];
-	        this.latency_ms = source["latency_ms"];
-	        this.p99_ms = source["p99_ms"];
-	        this.consumer_lag = source["consumer_lag"];
-	        this.sagas_per_sec = source["sagas_per_sec"];
-	        this.error_rate = source["error_rate"];
-	        this.cpu_pct = source["cpu_pct"];
-	        this.active_faults = source["active_faults"];
-	        this.sagas_ok = source["sagas_ok"];
-	        this.sagas_failed = source["sagas_failed"];
-	        this.source = source["source"];
-	    }
-	}
 
 }
 

@@ -9,16 +9,6 @@ func Presets() []Topology {
 	return []Topology{orchestrationSaga(), choreographySaga()}
 }
 
-// PresetByName returns the named preset, or false.
-func PresetByName(name string) (Topology, bool) {
-	for _, p := range Presets() {
-		if p.Name == name {
-			return p, true
-		}
-	}
-	return Topology{}, false
-}
-
 // DefaultConfig is the config a new node of a kind starts with, split into
 // hot keys (pushed to the running block through /control config.set) and
 // cold keys (baked in at creation; changing one recreates the container).

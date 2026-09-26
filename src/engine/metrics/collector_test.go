@@ -34,9 +34,6 @@ func TestPruneForgetsDeadClientsAndDeployments(t *testing.T) {
 	live := blockclient.New("127.0.0.1:2", "")
 	c.prev[gone] = scrape{}
 	c.prev[live] = scrape{}
-	c.last["gone"] = events.MetricsPayload{}
-	c.last["live"] = events.MetricsPayload{}
-	c.last[""] = events.MetricsPayload{}
 	c.lastLink["gone"] = map[string]events.LinkHealthEntry{}
 	c.lastLink["live"] = map[string]events.LinkHealthEntry{}
 
@@ -51,16 +48,8 @@ func TestPruneForgetsDeadClientsAndDeployments(t *testing.T) {
 	if _, ok := c.prev[live]; !ok {
 		t.Error("the live client's scrape was dropped")
 	}
-	if _, ok := c.last["gone"]; ok {
-		t.Error("the torn-down deployment's sample is still cached")
-	}
 	if _, ok := c.lastLink["gone"]; ok {
 		t.Error("the torn-down deployment's link memory is still cached")
-	}
-	for _, keep := range []string{"", "live"} {
-		if _, ok := c.last[keep]; !ok {
-			t.Errorf("sample %q was dropped", keep)
-		}
 	}
 	if _, ok := c.lastLink["live"]; !ok {
 		t.Error("the live deployment's link memory was dropped")

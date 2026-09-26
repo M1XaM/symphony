@@ -41,12 +41,6 @@ func (k FaultKind) Valid() bool {
 	return false
 }
 
-// Runtime reports whether the fault is executed by the container runtime
-// rather than inside the block.
-func (k FaultKind) Runtime() bool {
-	return k == FaultKill || k == FaultPause || k == FaultPartition
-}
-
 // Chaos reports whether the fault is one of the in-process chaos ops.
 func (k FaultKind) Chaos() bool {
 	return k == FaultCPU || k == FaultMemory || k == FaultStall || k == FaultCrash

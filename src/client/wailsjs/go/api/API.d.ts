@@ -24,17 +24,11 @@ export function DeleteRun(arg1:string):Promise<void>;
 
 export function DeleteUserTemplate(arg1:string):Promise<Array<spec.Topology>>;
 
-export function ExportRun(arg1:string):Promise<string>;
-
-export function FaultKinds():Promise<Array<string>>;
-
 export function GetDeployments():Promise<Array<core.DeploymentInfo>>;
 
 export function GetHostStats():Promise<Array<events.HostStatsPayload>>;
 
 export function GetLogHistory():Promise<Array<events.LogPayload>>;
-
-export function GetMetrics(arg1:string):Promise<events.MetricsPayload>;
 
 export function GetNodeLogs(arg1:string,arg2:string,arg3:number):Promise<Array<blockclient.LogLine>>;
 
@@ -53,8 +47,6 @@ export function ListContainers(arg1:boolean):Promise<Array<runtime.HostContainer
 export function ListRuns():Promise<Array<tests.RunSummary>>;
 
 export function ListScenarios():Promise<Array<tests.Scenario>>;
-
-export function NewNode(arg1:string,arg2:string,arg3:spec.Position):Promise<spec.Node>;
 
 export function PlanApply(arg1:spec.Topology):Promise<planner.Plan>;
 

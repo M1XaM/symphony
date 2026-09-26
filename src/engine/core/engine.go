@@ -956,7 +956,6 @@ func (e *Engine) InjectFault(ctx context.Context, depName, nodeID string, fault 
 	d.faults[nodeID] = append(d.faults[nodeID], af)
 	e.mu.Unlock()
 	e.log("warn", "fault", fmt.Sprintf("[%s] injected %s into %s (%dms) %v", d.name, fault.Kind, nodeID, fault.DurationMs, fault.Params))
-	e.bus.Publish(events.FaultInjected, events.FaultPayload{Deployment: d.name, NodeID: nodeID, Kind: string(fault.Kind), DurationMs: fault.DurationMs, Active: true})
 	e.setStatusMessage(d, nodeID, "fault: "+string(fault.Kind))
 
 	if dur > 0 && fault.Kind != spec.FaultCrash {
@@ -1057,7 +1056,6 @@ func (e *Engine) clearFault(d *deployment, nodeID string, f activeFault, expired
 		}
 	}
 	e.log("info", "fault", fmt.Sprintf("[%s] cleared %s on %s", d.name, f.Kind, nodeID))
-	e.bus.Publish(events.FaultInjected, events.FaultPayload{Deployment: d.name, NodeID: nodeID, Kind: string(f.Kind), Active: false})
 	e.mu.Lock()
 	remaining := len(d.faults[nodeID])
 	e.mu.Unlock()

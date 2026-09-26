@@ -51,8 +51,6 @@ type Collector struct {
 	window []float64
 	// last scrape per container, for deltas
 	prev map[*blockclient.Client]scrape
-	// last published sample per deployment, for the API
-	last map[string]events.MetricsPayload
 	// error-rate memory per edge so a link without traffic keeps its colour
 	lastLink map[string]map[string]events.LinkHealthEntry
 }
@@ -70,7 +68,6 @@ func NewCollector(bus *events.Bus, interval time.Duration, eng *core.Engine) *Co
 		rng:      rand.New(rand.NewSource(time.Now().UnixNano())),
 		base:     42,
 		prev:     map[*blockclient.Client]scrape{},
-		last:     map[string]events.MetricsPayload{},
 		lastLink: map[string]map[string]events.LinkHealthEntry{},
 	}
 }
@@ -92,14 +89,6 @@ func (c *Collector) Stop() {
 		c.cancel()
 		c.cancel = nil
 	}
-}
-
-// Last returns the most recent sample of a deployment ("" = all).
-func (c *Collector) Last(deployment string) (events.MetricsPayload, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	p, ok := c.last[deployment]
-	return p, ok
 }
 
 func (c *Collector) loop(ctx context.Context) {
@@ -140,9 +129,6 @@ func (c *Collector) tick(ctx context.Context) {
 		p.Ts, links.Ts = now, now
 		c.bus.Publish(events.MetricsTick, p)
 		c.bus.Publish(events.LinkHealth, links)
-		c.mu.Lock()
-		c.last[snap.Name] = p
-		c.mu.Unlock()
 		all.SagasPerSec += p.SagasPerSec
 		all.ConsumerLag += p.ConsumerLag
 		all.CPUPct += p.CPUPct
@@ -173,9 +159,6 @@ func (c *Collector) tick(ctx context.Context) {
 		all = c.idleSample(now)
 	}
 	c.bus.Publish(events.MetricsTick, all)
-	c.mu.Lock()
-	c.last[""] = all
-	c.mu.Unlock()
 	c.prune(snaps)
 }
 
@@ -184,7 +167,7 @@ func (c *Collector) tick(ctx context.Context) {
 // scraped document for every container it ever started.
 func (c *Collector) prune(snaps []core.DeploymentSnapshot) {
 	liveClients := map[*blockclient.Client]bool{}
-	liveDeps := map[string]bool{"": true} // "" is the all-deployments sample
+	liveDeps := map[string]bool{}
 	for _, snap := range snaps {
 		liveDeps[snap.Name] = true
 		for _, n := range snap.Nodes {
@@ -198,11 +181,6 @@ func (c *Collector) prune(snaps []core.DeploymentSnapshot) {
 	for cl := range c.prev {
 		if !liveClients[cl] {
 			delete(c.prev, cl)
-		}
-	}
-	for name := range c.last {
-		if !liveDeps[name] {
-			delete(c.last, name)
 		}
 	}
 	for name := range c.lastLink {

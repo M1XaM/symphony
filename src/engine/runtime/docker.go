@@ -58,7 +58,7 @@ var (
 // NewDocker connects to the daemon (DOCKER_HOST or the platform default)
 // and pings it, so the caller can fall back to the fake when there is none.
 func NewDocker(ctx context.Context, owner string) (*DockerRuntime, string, error) {
-	cli, err := client.New(client.FromEnv, client.WithAPIVersionNegotiation())
+	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, "", fmt.Errorf("docker client: %w", err)
 	}
@@ -184,7 +184,6 @@ func readJSONStream(r io.Reader, progress func(string)) error {
 			Status string `json:"status"`
 			ID     string `json:"id"`
 			Error  string `json:"error"`
-			Aux    json.RawMessage
 		}
 		if err := dec.Decode(&m); err != nil {
 			if errors.Is(err, io.EOF) {

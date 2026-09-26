@@ -11,10 +11,9 @@ import (
 )
 
 var (
-	ErrNotImplemented = errors.New("runtime: not implemented")
-	ErrNotFound       = errors.New("runtime: container not found")
-	ErrExists         = errors.New("runtime: container already exists")
-	ErrInvalidState   = errors.New("runtime: invalid state transition")
+	ErrNotFound     = errors.New("runtime: container not found")
+	ErrExists       = errors.New("runtime: container already exists")
+	ErrInvalidState = errors.New("runtime: invalid state transition")
 )
 
 // State is the container lifecycle state as reported by Inspect. The
@@ -144,8 +143,6 @@ type Runtime interface {
 	Stats(ctx context.Context, name string) (Stats, error)
 	Logs(ctx context.Context, name string, tail int) ([]string, error)
 	List(ctx context.Context) ([]Container, error)
-	// GC removes every container and network this runtime instance owns.
-	GC(ctx context.Context) (removed int, err error)
 }
 
 // StateListener is implemented by runtimes that can push state changes

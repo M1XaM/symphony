@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 )
 
@@ -48,38 +47,6 @@ func DefaultResources(k NodeKind) Resources {
 		return Resources{CPUs: 0.5, MemoryMB: 128}
 	}
 	return Resources{CPUs: 0.5, MemoryMB: 256}
-}
-
-// Decode reads a topology from JSON and normalises it.
-func Decode(r io.Reader) (Topology, error) {
-	var t Topology
-	dec := json.NewDecoder(r)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&t); err != nil {
-		return Topology{}, fmt.Errorf("spec: decode topology: %w", err)
-	}
-	return t.Normalized(), nil
-}
-
-// FromJSON is Decode over a byte slice.
-func FromJSON(b []byte) (Topology, error) {
-	return Decode(bytes.NewReader(b))
-}
-
-// Encode writes the topology as indented JSON.
-func Encode(w io.Writer, t Topology) error {
-	enc := json.NewEncoder(w)
-	enc.SetIndent("", "  ")
-	return enc.Encode(t.Normalized())
-}
-
-// ToJSON is Encode into a byte slice.
-func ToJSON(t Topology) ([]byte, error) {
-	var buf bytes.Buffer
-	if err := Encode(&buf, t); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
 }
 
 // Normalized fills defaults and canonicalises values so that two topologies

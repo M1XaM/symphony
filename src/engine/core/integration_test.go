@@ -54,7 +54,7 @@ func TestIntegrationOrchestration(t *testing.T) {
 	eng.Start(ctx)
 	defer eng.Stop()
 
-	topo, _ := spec.PresetByName("Orchestration (saga)")
+	topo := spec.Presets()[0] // Orchestration (saga)
 	topo.Name = "IT orchestration"
 	actx, cancel := context.WithTimeout(ctx, 6*time.Minute)
 	defer cancel()

@@ -5,7 +5,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -17,7 +16,6 @@ import (
 	"symphony/engine/hoststats"
 	"symphony/engine/library"
 	"symphony/engine/logstream"
-	"symphony/engine/metrics"
 	"symphony/engine/planner"
 	"symphony/engine/runtime"
 	"symphony/engine/spec"
@@ -30,7 +28,6 @@ type API struct {
 	bus    *events.Bus
 	lib    *library.Library
 	host   *hoststats.Sampler
-	col    *metrics.Collector
 	tests  *tests.Runner
 	logs   *logstream.Streamer
 	rtInfo RuntimeInfo
@@ -46,18 +43,17 @@ type RuntimeInfo struct {
 
 // Deps are what the API needs.
 type Deps struct {
-	Engine    *core.Engine
-	Bus       *events.Bus
-	Library   *library.Library
-	Host      *hoststats.Sampler
-	Collector *metrics.Collector
-	Tests     *tests.Runner
-	Logs      *logstream.Streamer
-	Runtime   RuntimeInfo
+	Engine  *core.Engine
+	Bus     *events.Bus
+	Library *library.Library
+	Host    *hoststats.Sampler
+	Tests   *tests.Runner
+	Logs    *logstream.Streamer
+	Runtime RuntimeInfo
 }
 
 func New(d Deps) *API {
-	return &API{eng: d.Engine, bus: d.Bus, lib: d.Library, host: d.Host, col: d.Collector, tests: d.Tests, logs: d.Logs, rtInfo: d.Runtime}
+	return &API{eng: d.Engine, bus: d.Bus, lib: d.Library, host: d.Host, tests: d.Tests, logs: d.Logs, rtInfo: d.Runtime}
 }
 
 // Startup wires the event bus to Wails. It is a package function rather
@@ -100,12 +96,6 @@ func (a *API) GetDeployments() []core.DeploymentInfo {
 // GetPresets returns the seeded example topologies.
 func (a *API) GetPresets() []spec.Topology {
 	return spec.Presets()
-}
-
-// NewNode returns a node of a kind with the defaults for it (image, config,
-// resources), so the palette and the engine agree on what a new node is.
-func (a *API) NewNode(id string, kind string, pos spec.Position) spec.Node {
-	return spec.NewNode(id, spec.NodeKind(kind), pos)
 }
 
 // GetUserTemplates returns the templates saved on this machine.
@@ -247,21 +237,6 @@ type LogStreamState struct {
 	Enabled   bool `json:"enabled"`
 }
 
-// GetMetrics returns the last metrics sample of a deployment ("" = all).
-func (a *API) GetMetrics(deployment string) events.MetricsPayload {
-	p, _ := a.col.Last(deployment)
-	return p
-}
-
-// FaultKinds lists the fault kinds the engine understands.
-func (a *API) FaultKinds() []string {
-	out := make([]string, 0, len(spec.AllFaultKinds))
-	for _, k := range spec.AllFaultKinds {
-		out = append(out, string(k))
-	}
-	return out
-}
-
 // --- tests --------------------------------------------------------------------
 
 // ListScenarios returns the predefined scenarios.
@@ -297,14 +272,4 @@ func (a *API) GetRun(runID string) (tests.Run, error) {
 // DeleteRun removes a stored run.
 func (a *API) DeleteRun(runID string) error {
 	return a.tests.DeleteRun(runID)
-}
-
-// ExportRun returns a run as pretty JSON.
-func (a *API) ExportRun(runID string) (string, error) {
-	r, err := a.tests.GetRun(runID)
-	if err != nil {
-		return "", err
-	}
-	b, err := json.MarshalIndent(r, "", "  ")
-	return string(b), err
 }

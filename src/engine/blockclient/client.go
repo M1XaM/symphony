@@ -117,10 +117,3 @@ func (c *Client) Logs(ctx context.Context, n int) ([]LogLine, error) {
 	err := c.do(ctx, http.MethodGet, fmt.Sprintf("/logs?n=%d", n), nil, &out, 2*time.Second)
 	return out.Lines, err
 }
-
-// Snapshot fetches the full internal state.
-func (c *Client) Snapshot(ctx context.Context) (map[string]any, error) {
-	var out map[string]any
-	err := c.do(ctx, http.MethodGet, "/snapshot", nil, &out, 3*time.Second)
-	return out, err
-}

@@ -122,7 +122,7 @@ func Run(opts Options) error {
 	if err != nil {
 		bus.Log("warn", "library", err.Error()+" — saved templates will not persist")
 	}
-	bound := api.New(api.Deps{Engine: eng, Bus: bus, Library: library.New(libPath), Host: host, Collector: col, Tests: runner, Logs: conlogs, Runtime: info})
+	bound := api.New(api.Deps{Engine: eng, Bus: bus, Library: library.New(libPath), Host: host, Tests: runner, Logs: conlogs, Runtime: info})
 
 	return wails.Run(&options.App{
 		Title:     opts.Title,

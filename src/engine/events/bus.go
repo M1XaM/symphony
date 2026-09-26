@@ -1,5 +1,5 @@
 // Package events is the typed in-process event bus. The engine, runtime and
-// metrics ticker publish here; internal/api subscribes once and forwards
+// metrics collector publish here; engine/api subscribes once and forwards
 // every event to the frontend through Wails' runtime.EventsEmit, using the
 // event Type as the Wails event name.
 package events
@@ -21,7 +21,6 @@ const (
 	LinkHealth     Type = "link:health"     // LinkHealthPayload, one per deployment every 500ms
 	HostStats      Type = "host:stats"      // HostStatsPayload, host machine usage every second
 	ContainerStats Type = "container:stats" // ContainerStatsPayload, one per container every second
-	FaultInjected  Type = "fault:injected"  // FaultPayload
 	TestProgress   Type = "test:progress"   // TestProgressPayload, while a scenario runs
 	TestDone       Type = "test:done"       // TestDonePayload
 )
@@ -169,15 +168,6 @@ type HostStatsPayload struct {
 	MemTotal uint64  `json:"mem_total_bytes"`
 	NetRxBps float64 `json:"net_rx_bps"` // bytes per second received, all interfaces
 	NetTxBps float64 `json:"net_tx_bps"` // bytes per second sent, all interfaces
-}
-
-// FaultPayload records a fault being injected or cleared.
-type FaultPayload struct {
-	Deployment string `json:"deployment"`
-	NodeID     string `json:"node_id"`
-	Kind       string `json:"kind"`
-	DurationMs int    `json:"duration_ms"`
-	Active     bool   `json:"active"`
 }
 
 // logHistoryCap bounds the replay buffer. The frontend keeps its own cap; this

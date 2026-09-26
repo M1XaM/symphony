@@ -441,16 +441,3 @@ func humanDuration(d time.Duration) string {
 		return fmt.Sprintf("%d days", int(d.Hours())/24)
 	}
 }
-
-func (f *FakeRuntime) GC(ctx context.Context) (int, error) {
-	f.mu.Lock()
-	n := len(f.containers) + len(f.networks)
-	for name, t := range f.timers {
-		t.Stop()
-		delete(f.timers, name)
-	}
-	f.containers = map[string]*Container{}
-	f.networks = map[string]bool{}
-	f.mu.Unlock()
-	return n, nil
-}
