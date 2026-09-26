@@ -1,11 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { fmtTime } from '../lib/format'
-import { useSymphonyStore } from '../store/useSymphonyStore'
+import { useSymphonyStore, type LogLineEntry } from '../store/useSymphonyStore'
 
 /** How many lines are put in the DOM at once. The store keeps LOG_CAP of them
  *  and the filter searches all of them; only the tail is rendered, because a
  *  few thousand live rows cost more to diff than they are worth. */
 const RENDER_CAP = 500
+
+/** Lines never change once logged, so a row renders once and every later
+ *  flush only has to add the new ones. */
+const LogRow = memo(function LogRow({ line }: { line: LogLineEntry }) {
+  return (
+    <div className={`log-line log-${line.level}`}>
+      <span className="log-ts">{fmtTime(line.ts)}</span>
+      <span className="log-src" title={line.source}>
+        {line.source}
+      </span>
+      <span className="log-msg">{line.message}</span>
+    </div>
+  )
+})
 
 /** Everything the engine says, plus — while the mirror is on — every line the
  *  containers write to stdout/stderr, which is what `docker logs -f` would
@@ -70,13 +84,7 @@ export function LogView() {
       </div>
       <div className="log-lines" ref={ref} onScroll={onScroll}>
         {lines.map((l) => (
-          <div key={l.id} className={`log-line log-${l.level}`}>
-            <span className="log-ts">{fmtTime(l.ts)}</span>
-            <span className="log-src" title={l.source}>
-              {l.source}
-            </span>
-            <span className="log-msg">{l.message}</span>
-          </div>
+          <LogRow key={l.id} line={l} />
         ))}
         {log.length === 0 ? <div className="muted">waiting for events…</div> : null}
         {log.length > 0 && matched.length === 0 ? <div className="muted">nothing matches "{filter}"</div> : null}

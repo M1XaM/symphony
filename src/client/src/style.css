@@ -30,11 +30,13 @@
   --panel-right-w: 300px;
   --toolbar-h: 38px;
   --drawer-h: 230px;
+  /* no backdrop blur behind it: blurring whatever the map repaints under four
+     panels costs more per frame than the map itself */
   --panel-bg: rgba(23, 24, 28, 0.93);
-  /* what a panel falls back to while the map moves: blurring a backdrop that
-     is being repainted every frame is what made panning feel like treacle */
-  --panel-solid: #191a1e;
-  --shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.5);
+  /* no blur: WebKitGTK repaints the whole window on every frame the map
+     moves, and re-blurring four panel-sized shadows each time cost more than
+     everything else on screen together */
+  --shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 3px 0 rgba(0, 0, 0, 0.3);
 }
 
 * {
@@ -112,8 +114,6 @@ button {
   border-radius: var(--radius-lg);
   background: var(--panel-bg);
   box-shadow: var(--shadow);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
   pointer-events: auto;
 }
 
@@ -162,8 +162,6 @@ button {
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--panel-bg);
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
   box-shadow: var(--shadow);
   color: var(--fg-muted);
   font-size: 13px;
@@ -796,17 +794,9 @@ input[type='checkbox'] {
   contain: layout paint;
 }
 
-/* While the viewport is being dragged or zoomed every frame repaints the whole
-   pane. Blurring four panel-sized backdrops and animating the live edges on
-   top of that is what made the map feel like it moved in slow motion, so both
-   stand down until the gesture ends — the still frames keep the glass look. */
-.app.is-moving .panel,
-.app.is-moving .panel-toggle {
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-  background: var(--panel-solid);
-}
-
+/* While the map is being dragged or zoomed every frame repaints the pane, so
+   the live-edge dash and the colour transitions hold still until the gesture
+   ends. */
 .app.is-moving .react-flow__edge.tedge-live path.react-flow__edge-path {
   animation: none;
 }
@@ -816,9 +806,17 @@ input[type='checkbox'] {
   transition: none;
 }
 
+/* the dot grid; Canvas keeps its offset and size in step with the viewport */
+.canvas-grid {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: radial-gradient(circle, var(--line) 0.5px, transparent 1px);
+  pointer-events: none;
+}
+
 .react-flow {
   --xy-background-color: var(--bg);
-  --xy-background-pattern-color: #2a2d34;
   --xy-edge-stroke: #4a4f5a;
   --xy-edge-stroke-selected: var(--accent);
   --xy-edge-stroke-width: 1.5;

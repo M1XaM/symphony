@@ -88,16 +88,17 @@ export interface SimSample {
 }
 
 const LOG_CAP = 2000
-/** Container output arrives line by line; rendering the tab once per line is
- *  what makes a busy deployment feel slow, so lines are collected and handed
- *  to React in one batch per frame-ish interval. */
-const LOG_FLUSH_MS = 100
+/** The engine talks in single events: a status per node, a stats sample per
+ *  container, a line per line of container output. Handing each one to React
+ *  on its own re-renders the app dozens of times a second, so they are queued
+ *  and applied together in one update per interval. */
+const EVENT_FLUSH_MS = 100
 /** Host samples kept for the Stats tab: one per second. */
 const HOST_STATS_CAP = 180
 const HOT_DEBOUNCE_MS = 150
 const TEMPLATES_KEY = 'symphony.templates'
 
-interface SymphonyState {
+export interface SymphonyState {
   initialized: boolean
   runtime: RuntimeInfo | null
   topology: Topology
@@ -188,21 +189,40 @@ interface SymphonyState {
   toggleCompare(id: string): Promise<void>
 }
 
-let logSeq = 0
-/** Lines waiting for the next flush; see LOG_FLUSH_MS. */
-let pendingLines: LogLineEntry[] = []
-let logFlush: ReturnType<typeof setTimeout> | null = null
+type Update = (s: SymphonyState) => Partial<SymphonyState>
 
-function flushLog(): void {
-  logFlush = null
-  if (pendingLines.length === 0) return
-  const batch = pendingLines.length > LOG_CAP ? pendingLines.slice(-LOG_CAP) : pendingLines
+let logSeq = 0
+/** Log lines and event updates waiting for the next flush; see EVENT_FLUSH_MS. */
+let pendingLines: LogLineEntry[] = []
+let pendingUpdates: Update[] = []
+let flushTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleFlush(): void {
+  if (flushTimer === null) flushTimer = setTimeout(flush, EVENT_FLUSH_MS)
+}
+
+/** Queue a state change driven by a backend event. */
+function queue(update: Update): void {
+  pendingUpdates.push(update)
+  scheduleFlush()
+}
+
+function flush(): void {
+  flushTimer = null
+  const updates = pendingUpdates
+  const lines = pendingLines.length > LOG_CAP ? pendingLines.slice(-LOG_CAP) : pendingLines
+  pendingUpdates = []
   pendingLines = []
   useSymphonyStore.setState((s) => {
-    const keep = Math.max(0, s.log.length + batch.length - LOG_CAP)
-    const next = keep > 0 ? s.log.slice(keep) : s.log.slice()
-    for (const l of batch) next.push(l)
-    return { log: next }
+    let next = s
+    for (const u of updates) next = { ...next, ...u(next) }
+    if (lines.length > 0) {
+      const keep = Math.max(0, next.log.length + lines.length - LOG_CAP)
+      const log = keep > 0 ? next.log.slice(keep) : next.log.slice()
+      for (const l of lines) log.push(l)
+      next = { ...next, log }
+    }
+    return next
   })
 }
 
@@ -392,23 +412,21 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
     }
 
     onEvent<ProgressEvent>('apply:progress', (p) => {
-      if (p.deployment === get().topology.name) {
-        set((s) => ({ opStatus: { ...s.opStatus, [p.op_id]: p.status } }))
-      }
+      queue((s) => (p.deployment === s.topology.name ? { opStatus: { ...s.opStatus, [p.op_id]: p.status } } : {}))
       get().appendLog(progressLine(p))
     })
     onEvent<LogEvent>('engine:log', (l) => {
       get().appendLog({ ts: l.ts || Date.now(), level: l.level, source: l.source, message: l.message })
     })
     onEvent<PhaseEvent>('engine:phase', (p) => {
-      set((s) =>
+      queue((s) =>
         p.phase === 'gone'
           ? { deployments: dropDeployment(s.deployments, p.deployment), simHistory: dropHistory(s.simHistory, p.deployment) }
           : { deployments: patchDeployment(s.deployments, p.deployment, () => ({ phase: p.phase as Phase })) },
       )
     })
     onEvent<NodeStatusEvent>('node:status', (st) => {
-      set((s) => ({
+      queue((s) => ({
         deployments: patchDeployment(s.deployments, st.deployment, (d) => {
           const statuses = { ...d.statuses }
           const { deployment: _dep, ...status } = st
@@ -419,23 +437,23 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
       }))
     })
     onEvent<LinkHealthEvent>('link:health', (h) => {
-      set((s) => {
+      queue((s) => {
         if (!(h.deployment in s.deployments)) return {}
         return { deployments: patchDeployment(s.deployments, h.deployment, () => ({ links: h.links })) }
       })
     })
     onEvent<MetricsEvent>('metrics:tick', (m) => {
       if (!m.deployment) {
-        set({ metrics: m })
+        queue(() => ({ metrics: m }))
         return
       }
-      set((s) => {
+      queue((s) => {
         if (!(m.deployment in s.deployments)) return {}
         return { deployments: patchDeployment(s.deployments, m.deployment, () => ({ metrics: m })) }
       })
     })
     onEvent<ContainerStatsEvent>('container:stats', (c) => {
-      set((s) => {
+      queue((s) => {
         if (!(c.deployment in s.deployments)) return {}
         const d = s.deployments[c.deployment]
         const prev = d.containers[c.node_id]
@@ -468,15 +486,17 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
       })
     })
     onEvent<HostStatsEvent>('host:stats', (h) => {
-      set((s) => {
+      queue((s) => {
         const hostStats = s.hostStats.length >= HOST_STATS_CAP ? s.hostStats.slice(1) : s.hostStats.slice()
         hostStats.push(h)
         return { hostStats }
       })
     })
-    onEvent<TestProgressEvent>('test:progress', (p) => set({ activeTest: p }))
+    onEvent<TestProgressEvent>('test:progress', (p) => queue(() => ({ activeTest: p })))
     onEvent<TestDoneEvent>('test:done', (d) => {
-      set({ activeTest: null })
+      // queued too, so a progress tick still waiting in the queue cannot
+      // bring the finished run back
+      queue(() => ({ activeTest: null }))
       get().appendLog({
         ts: Date.now(),
         level: d.passed ? 'info' : 'warn',
@@ -861,7 +881,7 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
 
   appendLog(line) {
     pendingLines.push({ id: ++logSeq, ...line })
-    if (logFlush === null) logFlush = setTimeout(flushLog, LOG_FLUSH_MS)
+    scheduleFlush()
   },
 
   clearLog() {
@@ -1046,7 +1066,7 @@ export function selectBusy(s: SymphonyState): boolean {
   return selectDeployment(s)?.busy ?? false
 }
 
-/** The gateway node of the canvas topology, if any. */
-export function selectGateway(s: SymphonyState): TopologyNode | null {
-  return s.topology.nodes.find((n) => n.kind === 'infra') ?? null
+/** Whether the canvas topology has a gateway node. */
+export function selectHasGateway(s: SymphonyState): boolean {
+  return s.topology.nodes.some((n) => n.kind === 'infra')
 }

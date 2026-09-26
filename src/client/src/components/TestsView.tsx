@@ -182,7 +182,10 @@ export function TestsView() {
   const openRun = useSymphonyStore((s) => s.openRun)
   const compareIds = useSymphonyStore((s) => s.compareIds)
   const compareRuns = useSymphonyStore((s) => s.compareRuns)
-  const topology = useSymphonyStore((s) => s.topology)
+  const name = useSymphonyStore((s) => s.topology.name)
+  // the kinds on the canvas as one sorted string, so dragging a node (a new
+  // topology object per frame) does not re-render the tab
+  const kindKey = useSymphonyStore((s) => [...new Set(s.topology.nodes.map((n) => n.kind))].sort().join(','))
   const applied = useSymphonyStore(selectIsApplied)
   const runtime = useSymphonyStore((s) => s.runtime)
   const startTest = useSymphonyStore((s) => s.startTest)
@@ -193,7 +196,7 @@ export function TestsView() {
   const [selected, setSelected] = useState<string>(scenarios[0]?.id ?? '')
   const [params, setParams] = useState<Record<string, unknown>>({})
 
-  const kinds = useMemo(() => new Set(topology.nodes.map((n) => n.kind as string)), [topology])
+  const kinds = useMemo(() => new Set<string>(kindKey ? kindKey.split(',') : []), [kindKey])
   const scenario = scenarios.find((s) => s.id === selected) ?? scenarios[0]
   const blocked = scenario ? blockedReason(scenario, kinds) : 'no scenarios'
   const pct = active && active.total_ms > 0 ? Math.min(100, (active.elapsed_ms / active.total_ms) * 100) : 0
@@ -273,10 +276,10 @@ export function TestsView() {
                   type="button"
                   className="btn btn-accent btn-small"
                   disabled={!!blocked || runtime === null}
-                  title={blocked || (applied ? `run on "${topology.name}"` : `applies "${topology.name}" first, then runs`)}
+                  title={blocked || (applied ? `run on "${name}"` : `applies "${name}" first, then runs`)}
                   onClick={() => void startTest(scenario.id, params)}
                 >
-                  run on {topology.name}
+                  run on {name}
                 </button>
               )}
             </div>

@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { KIND_LABEL, fmtBytes, fmtNum } from '../lib/format'
 import {
   selectContainers,
-  selectGateway,
+  selectHasGateway,
   selectIsApplied,
   selectLinks,
   selectSelectedEdge,
@@ -210,7 +210,24 @@ function LoadPanel({ node }: { node: TopologyNode }) {
   )
 }
 
-function NodeInspector({ node }: { node: TopologyNode }) {
+/** Everything the inspector shows of a node except where it sits: dragging
+ *  the selected node replaces its object on every frame, and the form does
+ *  not need to be redrawn for that. */
+function sameExceptPosition(a: { node: TopologyNode }, b: { node: TopologyNode }): boolean {
+  const x = a.node
+  const y = b.node
+  return (
+    x === y ||
+    (x.id === y.id &&
+      x.kind === y.kind &&
+      x.image === y.image &&
+      x.replicas === y.replicas &&
+      x.config === y.config &&
+      x.resources === y.resources)
+  )
+}
+
+const NodeInspector = memo(function NodeInspector({ node }: { node: TopologyNode }) {
   const status = useSymphonyStore((s) => selectStatuses(s)[node.id])
   const stats = useSymphonyStore((s) => selectContainers(s)[node.id])
   const applied = useSymphonyStore(selectIsApplied)
@@ -341,7 +358,7 @@ function NodeInspector({ node }: { node: TopologyNode }) {
       </div>
     </div>
   )
-}
+}, sameExceptPosition)
 
 function EdgeInspector({ edge }: { edge: TopologyEdge }) {
   const health = useSymphonyStore((s) => selectLinks(s)[edge.id])
@@ -443,12 +460,12 @@ function EdgeInspector({ edge }: { edge: TopologyEdge }) {
 export function Inspector() {
   const node = useSymphonyStore(selectSelectedNode)
   const edge = useSymphonyStore(selectSelectedEdge)
-  const gateway = useSymphonyStore(selectGateway)
+  const hasGateway = useSymphonyStore(selectHasGateway)
   return (
     <div className="inspector">
       <div className="inspector-main">
         {node ? <NodeInspector node={node} /> : edge ? <EdgeInspector edge={edge} /> : <MetricTiles />}
-        {!node && !edge && gateway ? (
+        {!node && !edge && hasGateway ? (
           <div className="summary-hint muted small">select the gateway to drive load, an edge to break a link</div>
         ) : null}
       </div>

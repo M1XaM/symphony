@@ -1,20 +1,20 @@
 import {
-  Background,
-  BackgroundVariant,
   Controls,
   MarkerType,
   ReactFlow,
   useReactFlow,
+  useStore,
   type Connection,
   type Edge,
   type EdgeChange,
   type NodeChange,
   type NodeTypes,
+  type ReactFlowState,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useCallback, useEffect, useMemo, useRef, type DragEvent } from 'react'
 import { selectIsApplied, selectLinks, selectStatuses, useSymphonyStore } from '../store/useSymphonyStore'
-import type { LinkLevel, NodeKind } from '../types/topology'
+import type { LinkLevel, NodeKind, NodeStatus } from '../types/topology'
 import { TopologyNodeView, type RFNode } from './nodes/TopologyNodeView'
 
 export const DRAG_MIME = 'application/symphony-node'
@@ -55,6 +55,31 @@ const nodeTypes: NodeTypes = {
   infra: TopologyNodeView,
 }
 
+// React Flow copies these props into its store whenever their identity
+// changes, so they are created once rather than on every render.
+const DELETE_KEYS = ['Backspace', 'Delete']
+const PRO_OPTIONS = { hideAttribution: true }
+
+const GRID_GAP = 20
+const selectTransform = (s: ReactFlowState) => s.transform
+
+/** The dot grid: one pane-sized box whose background is shifted and scaled
+ *  with the viewport. React Flow's <Background> redraws an SVG pattern the
+ *  size of the window on every frame of a pan, which WebKitGTK paints in
+ *  software; a CSS background offset is a fraction of that. */
+function DotGrid() {
+  const [x, y, zoom] = useStore(selectTransform)
+  const gap = GRID_GAP * zoom
+  return <div className="canvas-grid" style={{ backgroundPosition: `${x}px ${y}px`, backgroundSize: `${gap}px ${gap}px` }} />
+}
+
+/** The part of a status a node draws. The engine re-sends every node's
+ *  status each second with fresh checks and a new timestamp; when none of
+ *  this changed the node keeps its old object and is not re-rendered. */
+function sameBadge(a: NodeStatus | undefined, b: NodeStatus | undefined): boolean {
+  return a === b || (!!a && !!b && a.state === b.state && a.ready === b.ready && a.replicas === b.replicas && a.message === b.message)
+}
+
 export function Canvas() {
   const topology = useSymphonyStore((s) => s.topology)
   const statuses = useSymphonyStore(selectStatuses)
@@ -73,10 +98,10 @@ export function Canvas() {
   const { screenToFlowPosition, fitView, setViewport } = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
 
-  // Mark the whole app while the map is being moved, so the expensive chrome
-  // (panel backdrop blur, the live-edge dash) steps aside for the duration.
-  // Toggled straight on the DOM: a re-render per gesture is exactly what the
-  // frames being dropped cannot afford.
+  // Mark the whole app while the map is being moved, so the live-edge dash
+  // and the colour transitions stand down for the duration. Toggled straight
+  // on the DOM: a re-render per gesture is exactly what the frames being
+  // dropped cannot afford.
   const moving = useRef(0)
   const setMoving = useCallback((on: boolean) => {
     moving.current = Math.max(0, moving.current + (on ? 1 : -1))
@@ -87,8 +112,8 @@ export function Canvas() {
   useEffect(() => () => paneRef.current?.closest('.app')?.classList.remove('is-moving'), [])
 
   // React Flow re-renders a node whenever its object changes, so hand back the
-  // very same object when nothing about that node did. Without this, one
-  // status tick — or one frame of a drag — re-rendered every node on the map.
+  // very same object when nothing it shows did. Without this, one status
+  // tick — or one frame of a drag — re-rendered every node on the map.
   const nodeCache = useRef(new Map<string, RFNode>())
   const nodes = useMemo<RFNode[]>(() => {
     const prev = nodeCache.current
@@ -98,7 +123,7 @@ export function Canvas() {
       const selected = n.id === selectedNodeId
       const cached = prev.get(n.id)
       const node =
-        cached && cached.data.node === n && cached.data.status === status && cached.selected === selected
+        cached && cached.data.node === n && sameBadge(cached.data.status, status) && cached.selected === selected
           ? cached
           : { id: n.id, type: n.kind, position: n.position, selected, data: { node: n, status } }
       next.set(n.id, node)
@@ -231,6 +256,11 @@ export function Canvas() {
     [addEdge],
   )
 
+  const onPaneClick = useCallback(() => {
+    select(null)
+    selectEdge(null)
+  }, [select, selectEdge])
+
   const onDragOver = useCallback((e: DragEvent) => {
     e.preventDefault()
     e.dataTransfer.dropEffect = 'move'
@@ -259,18 +289,14 @@ export function Canvas() {
         onMoveEnd={onMoveEnd}
         onNodeDragStart={onMoveStart}
         onNodeDragStop={onMoveEnd}
-        onPaneClick={() => {
-          select(null)
-          selectEdge(null)
-        }}
-        deleteKeyCode={['Backspace', 'Delete']}
+        onPaneClick={onPaneClick}
+        deleteKeyCode={DELETE_KEYS}
         colorMode="dark"
         minZoom={MIN_ZOOM}
         maxZoom={MAX_ZOOM}
-        proOptions={{ hideAttribution: true }}
-        defaultEdgeOptions={{ type: 'smoothstep' }}
+        proOptions={PRO_OPTIONS}
       >
-        <Background variant={BackgroundVariant.Dots} gap={20} size={1} />
+        <DotGrid />
         <Controls showInteractive={false} position="top-left" onFitView={fitToClearArea} />
       </ReactFlow>
     </div>

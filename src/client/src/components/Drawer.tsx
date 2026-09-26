@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react'
-import { useSymphonyStore, type DrawerTab } from '../store/useSymphonyStore'
+import { useSymphonyStore, type DrawerTab, type SymphonyState } from '../store/useSymphonyStore'
 import { ContainersView } from './ContainersView'
 import { LogView } from './LogView'
 import { LogsView } from './LogsView'
@@ -25,24 +25,39 @@ const TABS: { id: DrawerTab; label: string }[] = [
   { id: 'tests', label: 'Tests' },
 ]
 
+const COUNTS: Partial<Record<DrawerTab, (s: SymphonyState) => number>> = {
+  plan: (s) => s.plan?.ops.length ?? 0,
+  log: (s) => s.log.length,
+  containers: (s) => s.containersRunning,
+}
+
+const noCount = () => 0
+
+/** A tab's badge subscribes on its own: the log count changes with every
+ *  flush, and that must not re-render the drawer and the open tab with it. */
+function TabBadge({ tab }: { tab: DrawerTab }) {
+  const count = useSymphonyStore(COUNTS[tab] ?? noCount)
+  const testRunning = useSymphonyStore((s) => tab === 'tests' && s.activeTest !== null)
+  return (
+    <>
+      {count ? <span className="tab-count">{count}</span> : null}
+      {testRunning ? <span className="live-dot live-dot-running tab-live" aria-label="test running" /> : null}
+    </>
+  )
+}
+
 export function Drawer() {
   const open = useSymphonyStore((s) => s.drawerOpen)
   const tab = useSymphonyStore((s) => s.drawerTab)
   const setDrawer = useSymphonyStore((s) => s.setDrawer)
-  const opCount = useSymphonyStore((s) => s.plan?.ops.length ?? 0)
-  const logCount = useSymphonyStore((s) => s.log.length)
-  const containerCount = useSymphonyStore((s) => s.containersRunning)
-  const testRunning = useSymphonyStore((s) => s.activeTest !== null)
   const View = VIEWS[tab]
-  const counts: Partial<Record<DrawerTab, number>> = { plan: opCount, log: logCount, containers: containerCount }
 
   return (
     <div className={`drawer${open ? ' is-open' : ''}`}>
       <div className="drawer-bar">
         {TABS.map((t) => (
           <button key={t.id} type="button" className={`tab${tab === t.id ? ' is-active' : ''}`} onClick={() => setDrawer(true, t.id)}>
-            {t.label} {counts[t.id] ? <span className="tab-count">{counts[t.id]}</span> : null}
-            {t.id === 'tests' && testRunning ? <span className="live-dot live-dot-running tab-live" aria-label="test running" /> : null}
+            {t.label} <TabBadge tab={t.id} />
           </button>
         ))}
         <div className="toolbar-spacer" />

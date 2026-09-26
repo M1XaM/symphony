@@ -1,10 +1,12 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { fmtTime } from '../lib/format'
 import { selectIsApplied, useSymphonyStore } from '../store/useSymphonyStore'
 
 /** Container logs of one node of the canvas topology, refreshed while open. */
 export function LogsView() {
-  const nodes = useSymphonyStore((s) => s.topology.nodes)
+  // joined into one string so a node being dragged does not re-render the tab
+  const ids = useSymphonyStore((s) => s.topology.nodes.map((n) => n.id).join('\n'))
+  const nodeIds = useMemo(() => (ids ? ids.split('\n') : []), [ids])
   const applied = useSymphonyStore(selectIsApplied)
   const logsNode = useSymphonyStore((s) => s.logsNode)
   const lines = useSymphonyStore((s) => s.nodeLogs)
@@ -32,8 +34,8 @@ export function LogsView() {
   }, [lines])
 
   useEffect(() => {
-    if (!logsNode && nodes.length > 0 && applied) setLogsNode(nodes[0].id)
-  }, [logsNode, nodes, applied, setLogsNode])
+    if (!logsNode && nodeIds.length > 0 && applied) setLogsNode(nodeIds[0])
+  }, [logsNode, nodeIds, applied, setLogsNode])
 
   return (
     <div className="log">
@@ -41,9 +43,9 @@ export function LogsView() {
         <span className="muted">
           container logs ·{' '}
           <select className="input input-inline" value={logsNode ?? ''} onChange={(e) => setLogsNode(e.target.value || null)} disabled={!applied}>
-            {nodes.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.id}
+            {nodeIds.map((id) => (
+              <option key={id} value={id}>
+                {id}
               </option>
             ))}
           </select>
