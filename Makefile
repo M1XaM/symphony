@@ -15,6 +15,8 @@
 #   make blocks          -> build the five block images (symphony/<block>:dev)
 #   make test            -> Go tests (blocks contract test runs the blocks as processes)
 #   make integration     -> engine tests against the host's Docker daemon
+#   make tag vX.Y.Z      -> tag HEAD and push the tag; CI builds and publishes
+#                           the release (.github/workflows/release.yml)
 #
 # Native targets (need a local Go/Node/Wails toolchain, see README):
 #   make build-local     -> wails build on the host
@@ -62,7 +64,7 @@ DOCKER_RUN = $(DOCKER) run --rm \
   -v $(IMAGE)-node-modules:/work/client/node_modules \
   -e HOST_UID=$(HOST_UID) -e HOST_GID=$(HOST_GID) -e PLATFORM=$(PLATFORM)
 
-.PHONY: build image shell run clean clean-docker build-local dev deps bindings check desktop blocks test integration
+.PHONY: build image shell run clean clean-docker build-local dev deps bindings check desktop blocks test integration tag
 
 # --- block images ------------------------------------------------------------
 
@@ -141,6 +143,33 @@ bindings:
 check:
 	cd $(SRC) && go vet ./...
 	cd $(CLIENT) && npm run typecheck
+
+# --- release -----------------------------------------------------------------
+
+# `make tag v1.2.3`: the version is the second goal on the command line, so it
+# is read from there and given a no-op rule of its own.
+ifeq (tag,$(firstword $(MAKECMDGOALS)))
+  VERSION := $(word 2,$(MAKECMDGOALS))
+  ifneq ($(VERSION),)
+    $(eval $(VERSION):;@:)
+  endif
+endif
+
+# Tags HEAD and pushes only the tag; the push starts the release workflow.
+# HEAD must already be on the remote, so the release is built from a commit
+# the branch history keeps.
+tag:
+	@echo "$(VERSION)" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$$' || \
+	  { echo "usage: make tag vX.Y.Z (got '$(VERSION)')"; exit 1; }
+	@git diff --quiet && git diff --cached --quiet || \
+	  { echo "uncommitted changes: commit them first, the tag would not include them"; exit 1; }
+	@git fetch --quiet --tags origin
+	@! git rev-parse -q --verify "refs/tags/$(VERSION)" >/dev/null || \
+	  { echo "tag $(VERSION) already exists"; exit 1; }
+	@test -n "$$(git branch -r --contains HEAD)" || \
+	  { echo "HEAD is not on origin yet: push the branch first"; exit 1; }
+	git tag -a "$(VERSION)" -m "$(VERSION)"
+	git push origin "$(VERSION)"
 
 # --- shared: copy the wails output to ./bin ----------------------------------
 

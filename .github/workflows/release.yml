@@ -1,0 +1,88 @@
+# Builds Symphony for Linux and Windows when a vX.Y.Z tag is pushed (see
+# `make tag`) and publishes both binaries as a GitHub Release. Nothing is
+# published unless the release gate passes: neither binary may start with a
+# terminal or console window.
+#
+# Run it by hand from the Actions tab for a dry run: it builds and verifies,
+# and publishes nothing.
+name: release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Version
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then v="$GITHUB_REF_NAME"; else v="dev-${GITHUB_SHA::7}"; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      # Same containerised build as on a developer machine; the second build
+      # reuses the builder image and the Go / npm caches of the first.
+      - name: Build Linux
+        run: make build PLATFORM=linux/amd64
+
+      - name: Build Windows
+        run: make build PLATFORM=windows/amd64
+
+      - name: Package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir dist
+          cp bin/symphony "dist/symphony-$VERSION-linux-amd64"
+          cp bin/symphony.exe "dist/symphony-$VERSION-windows-amd64.exe"
+          chmod +x "dist/symphony-$VERSION-linux-amd64"
+          (cd dist && sha256sum -- * > SHA256SUMS)
+          ls -l dist
+
+      - name: Release gate (no terminal, no console)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            libwebkit2gtk-4.1-0 xvfb xauth shared-mime-info libglib2.0-bin file python3 procps
+          .github/scripts/verify-release.sh \
+            "dist/symphony-$VERSION-linux-amd64" "dist/symphony-$VERSION-windows-amd64.exe"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: symphony-${{ steps.version.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: symphony-${{ needs.build.outputs.version }}
+          path: dist
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Symphony $GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag
