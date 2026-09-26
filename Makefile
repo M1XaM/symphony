@@ -4,10 +4,10 @@
 # host needs only Docker and make: no Go, Node, gcc or GTK/WebKit headers.
 #
 #   make                 -> make build
-#   make build           -> build in the container, place a runnable binary at ./bin/install
+#   make build           -> build in the container, place a runnable binary at ./bin/symphony
 #   make image           -> (re)build the builder image
 #   make shell           -> interactive shell in the builder container
-#   make run             -> build then launch ./bin/install
+#   make run             -> build then launch ./bin/symphony
 #   make clean           -> remove build outputs
 #   make clean-docker    -> also remove the builder image and cache volumes
 #   make desktop         -> register bin/symphony.desktop with the desktop, so the
@@ -25,7 +25,7 @@
 #
 # Variables:
 #   PLATFORM=linux/amd64   wails target; windows/amd64 cross-compiles from the
-#                          container too (output bin/install.exe). darwin must
+#                          container too (output bin/symphony.exe). darwin must
 #                          be built natively on a Mac with `make build-local`.
 
 .DEFAULT_GOAL := build
@@ -36,13 +36,15 @@ CLIENT   := $(SRC)/client
 APP      := symphony
 PLATFORM ?= linux/amd64
 
+# The output must not be called "install": shared-mime-info files that name
+# as text/x-install (an INSTALL readme), and file managers then open the
+# binary as an executable text file, in an editor or a terminal.
 ifeq ($(findstring windows,$(PLATFORM)),windows)
   BIN := $(APP).exe
-  OUT := bin/install.exe
 else
   BIN := $(APP)
-  OUT := bin/install
 endif
+OUT := bin/$(BIN)
 
 # --- docker build ------------------------------------------------------------
 
@@ -140,12 +142,11 @@ check:
 	cd $(SRC) && go vet ./...
 	cd $(CLIENT) && npm run typecheck
 
-# --- shared: copy the wails output to ./bin/install -------------------------
+# --- shared: copy the wails output to ./bin ----------------------------------
 
-# On Linux a .desktop entry is written next to the binary. The binary itself
-# is a plain GUI program that never needs a terminal, but file managers and
-# launchers only know that from a desktop entry (Terminal=false); opened any
-# other way some of them wrap an unknown executable in a terminal window.
+# A Linux build also writes a .desktop entry next to the binary, so `make
+# desktop` can put Symphony in the app grid. The binary is a plain GUI program
+# and never needs a terminal either way.
 DESKTOP := bin/$(APP).desktop
 
 .PHONY: install-bin
@@ -159,7 +160,7 @@ else
 	cp $(SRC)/build/bin/$(BIN) $(OUT)
 endif
 	chmod +x $(OUT)
-ifeq ($(UNAME_S),Linux)
+ifeq ($(UNAME_S)$(findstring linux,$(PLATFORM)),Linuxlinux)
 	printf '[Desktop Entry]\nType=Application\nName=Symphony\nComment=Orchestration vs. choreography fault-injection benchmark\nExec=%s\nIcon=%s\nTerminal=false\nCategories=Development;\nStartupWMClass=$(APP)\n' \
 	  "$(CURDIR)/$(OUT)" "$(CURDIR)/$(SRC)/build/appicon.png" > $(DESKTOP)
 	chmod +x $(DESKTOP)
