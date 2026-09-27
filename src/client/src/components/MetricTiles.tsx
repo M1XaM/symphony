@@ -6,7 +6,6 @@ export function MetricTiles() {
   const statuses = useSymphonyStore(selectStatuses)
   const phase = useSymphonyStore(selectPhase)
   const applied = useSymphonyStore(selectIsApplied)
-  const runtime = useSymphonyStore((s) => s.runtime)
 
   const total = Object.keys(statuses).length
   const healthy = Object.values(statuses).filter((s) => s.state === 'healthy' || s.state === 'degraded').length
@@ -35,7 +34,7 @@ export function MetricTiles() {
       </div>
       <div className="summary-row">
         <span className="muted">numbers from</span>
-        <span className="mono small">{m?.source === 'blocks' ? 'block counters' : runtime?.kind === 'fake' ? 'mock (no docker)' : applied ? 'waiting…' : 'idle'}</span>
+        <span className="mono small">{applied ? 'block counters' : 'idle'}</span>
       </div>
       <div className="tiles">
         {tiles.map((t) => (

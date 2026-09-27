@@ -24,9 +24,13 @@ import (
 
 func TestIntegrationOrchestration(t *testing.T) {
 	ctx := context.Background()
-	rt, detail, err := runtime.NewDocker(ctx, "symphony-test")
+	rt, err := runtime.NewDocker("symphony-test")
 	if err != nil {
-		t.Skip("docker not reachable: ", err)
+		t.Fatal(err)
+	}
+	detail, err := rt.Ping(ctx)
+	if err != nil {
+		t.Skip(err)
 	}
 	defer rt.Close()
 	t.Log("docker", detail)

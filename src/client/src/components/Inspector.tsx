@@ -3,6 +3,7 @@ import { KIND_LABEL, fmtBytes, fmtNum } from '../lib/format'
 import {
   selectContainers,
   selectHasGateway,
+  selectDockerUp,
   selectIsApplied,
   selectLinks,
   selectSelectedEdge,
@@ -231,7 +232,7 @@ const NodeInspector = memo(function NodeInspector({ node }: { node: TopologyNode
   const status = useSymphonyStore((s) => selectStatuses(s)[node.id])
   const stats = useSymphonyStore((s) => selectContainers(s)[node.id])
   const applied = useSymphonyStore(selectIsApplied)
-  const runtime = useSymphonyStore((s) => s.runtime)
+  const dockerUp = useSymphonyStore(selectDockerUp)
   const updateNode = useSymphonyStore((s) => s.updateNode)
   const setHotConfig = useSymphonyStore((s) => s.setHotConfig)
   const setColdConfig = useSymphonyStore((s) => s.setColdConfig)
@@ -245,7 +246,7 @@ const NodeInspector = memo(function NodeInspector({ node }: { node: TopologyNode
   const hotKeys = Object.keys(node.config.hot).sort()
   const coldKeys = Object.keys(node.config.cold).sort()
   const running = applied && status !== undefined && status.state !== 'removed'
-  const canControl = running && runtime?.kind === 'docker'
+  const canControl = running && dockerUp
 
   return (
     <div className="inspector-node">
@@ -363,12 +364,12 @@ const NodeInspector = memo(function NodeInspector({ node }: { node: TopologyNode
 function EdgeInspector({ edge }: { edge: TopologyEdge }) {
   const health = useSymphonyStore((s) => selectLinks(s)[edge.id])
   const applied = useSymphonyStore(selectIsApplied)
-  const runtime = useSymphonyStore((s) => s.runtime)
+  const dockerUp = useSymphonyStore(selectDockerUp)
   const updateEdge = useSymphonyStore((s) => s.updateEdge)
   const removeEdges = useSymphonyStore((s) => s.removeEdges)
   const injectFault = useSymphonyStore((s) => s.injectFault)
   const clearFaults = useSymphonyStore((s) => s.clearFaults)
-  const canControl = applied && runtime?.kind === 'docker'
+  const canControl = applied && dockerUp
 
   const scoped = (f: FaultSpec): FaultSpec => ({ ...f, params: { ...f.params, edge: edge.id, direction: 'out' } })
 

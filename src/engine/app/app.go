@@ -60,8 +60,6 @@ type Options struct {
 	// go.sum and blocks/); nil disables in-app image builds.
 	Blocks fs.FS
 	Title  string
-	// ForceFake skips Docker even when a daemon is reachable (SYMPHONY_RUNTIME=fake).
-	ForceFake bool
 	// TeardownOnExit removes every deployment when the window closes
 	// (SYMPHONY_TEARDOWN_ON_EXIT=1); by default containers keep running and
 	// are adopted by the next session.
@@ -73,9 +71,6 @@ type Options struct {
 func Run(opts Options) error {
 	if opts.Title == "" {
 		opts.Title = "Symphony"
-	}
-	if os.Getenv("SYMPHONY_RUNTIME") == "fake" {
-		opts.ForceFake = true
 	}
 	if os.Getenv("SYMPHONY_TEARDOWN_ON_EXIT") == "1" {
 		opts.TeardownOnExit = true
@@ -95,34 +90,21 @@ func Run(opts Options) error {
 		owner = "symphony"
 	}
 
-	var rt runtime.Runtime
-	info := api.RuntimeInfo{Kind: "fake", Detail: "no container daemon; containers are simulated"}
-	var dockerRT *runtime.DockerRuntime
-	if !opts.ForceFake {
-		d, detail, err := runtime.NewDocker(context.Background(), owner)
-		if err != nil {
-			bus.Log("warn", "runtime", err.Error()+" — falling back to the fake runtime")
-		} else {
-			dockerRT = d
-			rt = d
-			info = api.RuntimeInfo{Kind: "docker", Detail: detail}
-		}
+	docker, err := runtime.NewDocker(owner)
+	if err != nil {
+		return err
 	}
-	if rt == nil {
-		rt = runtime.NewFake(runtime.FakeOptions{})
-	}
-
-	eng := core.New(core.Options{Runtime: rt, Bus: bus, Images: images.NewEnsurer(opts.Blocks), Store: store})
+	eng := core.New(core.Options{Runtime: docker, Bus: bus, Images: images.NewEnsurer(opts.Blocks), Store: store})
 	col := metrics.NewCollector(bus, 500*time.Millisecond, eng)
 	host := hoststats.New(bus, time.Second)
-	runner := tests.NewRunner(eng, bus, configDir, info.Kind)
-	conlogs := logstream.New(rt, bus)
+	runner := tests.NewRunner(eng, bus, configDir)
+	conlogs := logstream.New(docker, bus)
 
 	libPath, err := library.DefaultPath()
 	if err != nil {
 		bus.Log("warn", "library", err.Error()+" — saved templates will not persist")
 	}
-	bound := api.New(api.Deps{Engine: eng, Bus: bus, Library: library.New(libPath), Host: host, Tests: runner, Logs: conlogs, Runtime: info})
+	bound := api.New(api.Deps{Engine: eng, Bus: bus, Library: library.New(libPath), Host: host, Tests: runner, Logs: conlogs})
 
 	return wails.Run(&options.App{
 		Title:     opts.Title,
@@ -141,9 +123,25 @@ func Run(opts Options) error {
 		LogLevelProduction: logger.INFO,
 		OnStartup: func(ctx context.Context) {
 			api.Startup(bound, ctx)
-			if dockerRT != nil {
-				eng.Adopt(ctx)
+			// Without a daemon the app still opens, and says so; it picks
+			// Docker up (and what it left running) as soon as it answers.
+			// The first look is made here, before the webview asks for
+			// the deployments.
+			dockerChanged := func(up bool, detail string) {
+				if up {
+					bus.Log("info", "runtime", "docker daemon connected ("+detail+")")
+					eng.Adopt(ctx)
+				} else {
+					bus.Log("warn", "runtime", detail)
+				}
+				api.SetRuntimeStatus(bound, events.RuntimeStatusPayload{Available: up, Detail: detail})
 			}
+			detail, err := docker.Ping(ctx)
+			if err != nil {
+				detail = err.Error()
+			}
+			dockerChanged(err == nil, detail)
+			go docker.Watch(ctx, err == nil, dockerChanged)
 			eng.Start(ctx)
 			col.Start(ctx)
 			host.Start(ctx)
@@ -160,9 +158,7 @@ func Run(opts Options) error {
 			col.Stop()
 			eng.Stop()
 			api.Shutdown(bound)
-			if dockerRT != nil {
-				_ = dockerRT.Close()
-			}
+			_ = docker.Close()
 		},
 		Bind: []interface{}{bound},
 	})

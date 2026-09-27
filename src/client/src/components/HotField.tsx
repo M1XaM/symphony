@@ -7,7 +7,7 @@ interface Bounds {
   step: number
 }
 
-/** Slider range guessed from the key's unit suffix; good enough for mock configs. */
+/** Slider range guessed from the key's unit suffix; good enough for the block configs. */
 function boundsFor(key: string, value: number): Bounds {
   if (key.endsWith('_rate') || key.endsWith('_ratio')) return { min: 0, max: 1, step: 0.01 }
   if (key.endsWith('_ms')) return { min: 0, max: Math.max(5000, value * 2), step: 10 }

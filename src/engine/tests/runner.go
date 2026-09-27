@@ -47,7 +47,6 @@ type Run struct {
 	Template   string             `json:"template"`
 	Topology   spec.Topology      `json:"topology"`
 	Params     map[string]any     `json:"params"`
-	Runtime    string             `json:"runtime"`
 	StartedAt  int64              `json:"started_at"`
 	EndedAt    int64              `json:"ended_at"`
 	Passed     bool               `json:"passed"`
@@ -80,7 +79,6 @@ type Runner struct {
 	eng      *core.Engine
 	bus      *events.Bus
 	dir      string
-	rtKind   string
 	catalog  []Scenario
 	catalogE error
 
@@ -100,8 +98,8 @@ type activeRun struct {
 }
 
 // NewRunner stores runs under dir/runs.
-func NewRunner(eng *core.Engine, bus *events.Bus, dir, rtKind string) *Runner {
-	r := &Runner{eng: eng, bus: bus, dir: dir, rtKind: rtKind, active: map[string]*activeRun{}}
+func NewRunner(eng *core.Engine, bus *events.Bus, dir string) *Runner {
+	r := &Runner{eng: eng, bus: bus, dir: dir, active: map[string]*activeRun{}}
 	r.catalog, r.catalogE = loadScenarios()
 	return r
 }
@@ -177,7 +175,7 @@ func (r *Runner) Start(ctx context.Context, scenarioID string, template spec.Top
 	}
 	id := fmt.Sprintf("%s-%s-%d", s.ID, spec.Slug(template.Name), time.Now().Unix())
 	run := &Run{ID: id, Scenario: s.ID, Name: s.Name, Template: template.Name, Topology: template, Params: merged,
-		Runtime: r.rtKind, StartedAt: time.Now().UnixMilli(), Series: map[string][]Point{}, Summary: map[string]float64{}}
+		StartedAt: time.Now().UnixMilli(), Series: map[string][]Point{}, Summary: map[string]float64{}}
 	rctx, cancel := context.WithCancel(context.Background())
 	a := &activeRun{run: run, cancel: cancel, live: map[string]float64{}, prevOK: map[string]float64{}}
 	r.mu.Lock()

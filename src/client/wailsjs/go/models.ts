@@ -14,20 +14,6 @@ export namespace api {
 	        this.enabled = source["enabled"];
 	    }
 	}
-	export class RuntimeInfo {
-	    kind: string;
-	    detail: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new RuntimeInfo(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.kind = source["kind"];
-	        this.detail = source["detail"];
-	    }
-	}
 
 }
 
@@ -260,6 +246,20 @@ export namespace events {
 	        this.source = source["source"];
 	        this.message = source["message"];
 	        this.ts = source["ts"];
+	    }
+	}
+	export class RuntimeStatusPayload {
+	    available: boolean;
+	    detail: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RuntimeStatusPayload(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.available = source["available"];
+	        this.detail = source["detail"];
 	    }
 	}
 
@@ -706,7 +706,6 @@ export namespace tests {
 	    template: string;
 	    topology: spec.Topology;
 	    params: Record<string, any>;
-	    runtime: string;
 	    started_at: number;
 	    ended_at: number;
 	    passed: boolean;
@@ -730,7 +729,6 @@ export namespace tests {
 	        this.template = source["template"];
 	        this.topology = this.convertValues(source["topology"], spec.Topology);
 	        this.params = source["params"];
-	        this.runtime = source["runtime"];
 	        this.started_at = source["started_at"];
 	        this.ended_at = source["ended_at"];
 	        this.passed = source["passed"];

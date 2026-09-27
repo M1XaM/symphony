@@ -44,7 +44,6 @@ export function ContainersView() {
   const running = useSymphonyStore((s) => s.containersRunning)
   const all = useSymphonyStore((s) => s.containersAll)
   const error = useSymphonyStore((s) => s.containersError)
-  const runtime = useSymphonyStore((s) => s.runtime)
   const refresh = useSymphonyStore((s) => s.refreshContainers)
   const setAll = useSymphonyStore((s) => s.setContainersAll)
   const [paused, setPaused] = useState(false)
@@ -69,7 +68,7 @@ export function ContainersView() {
     <div className="ps">
       <div className="log-actions">
         <span className="muted">
-          {runtime?.kind === 'docker' ? 'docker ps' : 'simulated containers'} · {running} running
+          docker ps · {running} running
           {all ? ` · ${containers.length} total` : ''}
           {paused ? ' · paused' : ` · every ${REFRESH_MS / 1000}s`}
         </span>

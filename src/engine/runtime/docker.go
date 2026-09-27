@@ -55,24 +55,56 @@ var (
 	_ LogFollower   = (*DockerRuntime)(nil)
 )
 
-// NewDocker connects to the daemon (DOCKER_HOST or the platform default)
-// and pings it, so the caller can fall back to the fake when there is none.
-func NewDocker(ctx context.Context, owner string) (*DockerRuntime, string, error) {
+// NewDocker returns a runtime for the daemon DOCKER_HOST (or the platform
+// default) points at. It does not connect: the daemon may not be up yet, and
+// may come and go while the app runs. Ping and Watch say when it answers.
+func NewDocker(owner string) (*DockerRuntime, error) {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
-		return nil, "", fmt.Errorf("docker client: %w", err)
+		return nil, fmt.Errorf("docker client: %w", err)
 	}
-	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	ping, err := cli.Ping(pctx, client.PingOptions{})
-	if err != nil {
-		cli.Close()
-		return nil, "", fmt.Errorf("docker daemon not reachable: %w", err)
-	}
-	return &DockerRuntime{cli: cli, owner: owner, prevStats: map[string]container.StatsResponse{}}, "api " + ping.APIVersion, nil
+	return &DockerRuntime{cli: cli, owner: owner, prevStats: map[string]container.StatsResponse{}}, nil
 }
 
-func (d *DockerRuntime) Kind() string { return "docker" }
+// Ping asks the daemon whether it is up and returns its API version.
+func (d *DockerRuntime) Ping(ctx context.Context) (string, error) {
+	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	ping, err := d.cli.Ping(pctx, client.PingOptions{NegotiateAPIVersion: true})
+	if err != nil {
+		return "", fmt.Errorf("docker daemon not reachable: %w", err)
+	}
+	return "api " + ping.APIVersion, nil
+}
+
+// Watch pings the daemon until ctx ends and calls fn whenever it comes or
+// goes; up is what the caller saw last. It asks every couple of seconds
+// while the daemon is down, so a Docker started after the app is noticed at
+// once, and rarely while it is up.
+func (d *DockerRuntime) Watch(ctx context.Context, up bool, fn func(up bool, detail string)) {
+	for {
+		wait := 10 * time.Second
+		if !up {
+			wait = 2 * time.Second
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+		detail, err := d.Ping(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if (err == nil) != up {
+			up = err == nil
+			if err != nil {
+				detail = err.Error()
+			}
+			fn(up, detail)
+		}
+	}
+}
 
 // Close stops the event stream and the client.
 func (d *DockerRuntime) Close() error {

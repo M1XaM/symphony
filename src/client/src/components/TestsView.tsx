@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import { fmtNum } from '../lib/format'
-import { selectIsApplied, useSymphonyStore } from '../store/useSymphonyStore'
+import { selectDockerUp, selectIsApplied, useSymphonyStore } from '../store/useSymphonyStore'
 import type { Run, RunSummary, Scenario } from '../types/topology'
 import { Sparkline } from './Sparkline'
 
@@ -187,7 +187,7 @@ export function TestsView() {
   // topology object per frame) does not re-render the tab
   const kindKey = useSymphonyStore((s) => [...new Set(s.topology.nodes.map((n) => n.kind))].sort().join(','))
   const applied = useSymphonyStore(selectIsApplied)
-  const runtime = useSymphonyStore((s) => s.runtime)
+  const dockerUp = useSymphonyStore(selectDockerUp)
   const startTest = useSymphonyStore((s) => s.startTest)
   const abortTest = useSymphonyStore((s) => s.abortTest)
   const viewRun = useSymphonyStore((s) => s.viewRun)
@@ -275,7 +275,7 @@ export function TestsView() {
                 <button
                   type="button"
                   className="btn btn-accent btn-small"
-                  disabled={!!blocked || runtime === null}
+                  disabled={!!blocked || !dockerUp}
                   title={blocked || (applied ? `run on "${name}"` : `applies "${name}" first, then runs`)}
                   onClick={() => void startTest(scenario.id, params)}
                 >
@@ -286,7 +286,6 @@ export function TestsView() {
             <div className="muted small">{scenario.description}</div>
             {scenario.reveals ? <div className="muted small">reveals: {scenario.reveals}</div> : null}
             {blocked ? <div className="finding finding-warning">{blocked}</div> : null}
-            {runtime?.kind === 'fake' ? <div className="finding finding-warning">no Docker daemon: the run uses simulated containers and mock numbers</div> : null}
             <ParamsForm scenario={scenario} values={params} onChange={setParams} />
             {active ? (
               <div className="test-progress">

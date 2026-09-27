@@ -6,6 +6,7 @@ package api
 import (
 	"context"
 	"errors"
+	"sync"
 
 	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -30,16 +31,16 @@ type API struct {
 	host   *hoststats.Sampler
 	tests  *tests.Runner
 	logs   *logstream.Streamer
-	rtInfo RuntimeInfo
 	ctx    context.Context
 	unsub  func()
+
+	mu     sync.Mutex
+	docker events.RuntimeStatusPayload
 }
 
-// RuntimeInfo says which backend the engine runs on.
-type RuntimeInfo struct {
-	Kind   string `json:"kind"` // docker | fake
-	Detail string `json:"detail"`
-}
+// ErrNoDocker is returned by every call that needs containers while the
+// Docker daemon does not answer.
+var ErrNoDocker = errors.New("Docker is not available: install Docker and start it, then try again")
 
 // Deps are what the API needs.
 type Deps struct {
@@ -49,11 +50,11 @@ type Deps struct {
 	Host    *hoststats.Sampler
 	Tests   *tests.Runner
 	Logs    *logstream.Streamer
-	Runtime RuntimeInfo
 }
 
 func New(d Deps) *API {
-	return &API{eng: d.Engine, bus: d.Bus, lib: d.Library, host: d.Host, tests: d.Tests, logs: d.Logs, rtInfo: d.Runtime}
+	return &API{eng: d.Engine, bus: d.Bus, lib: d.Library, host: d.Host, tests: d.Tests, logs: d.Logs,
+		docker: events.RuntimeStatusPayload{Detail: "checking for the Docker daemon"}}
 }
 
 // Startup wires the event bus to Wails. It is a package function rather
@@ -63,7 +64,16 @@ func Startup(a *API, ctx context.Context) {
 	a.unsub = a.bus.Subscribe(func(ev events.Event) {
 		wailsrt.EventsEmit(ctx, string(ev.Type), ev.Payload)
 	})
-	a.bus.Log("info", "engine", "symphony ready ("+a.rtInfo.Kind+" runtime, "+a.rtInfo.Detail+")")
+	a.bus.Log("info", "engine", "symphony ready")
+}
+
+// SetRuntimeStatus records whether the Docker daemon answers and tells the
+// webview. A package function, so it is not exposed as a binding.
+func SetRuntimeStatus(a *API, st events.RuntimeStatusPayload) {
+	a.mu.Lock()
+	a.docker = st
+	a.mu.Unlock()
+	a.bus.Publish(events.RuntimeStatus, st)
 }
 
 // Shutdown detaches from the bus.
@@ -80,8 +90,14 @@ func (a *API) context() context.Context {
 	return a.ctx
 }
 
-// GetRuntimeInfo reports the container backend in use.
-func (a *API) GetRuntimeInfo() RuntimeInfo { return a.rtInfo }
+// GetRuntimeStatus reports whether the Docker daemon answers.
+func (a *API) GetRuntimeStatus() events.RuntimeStatusPayload {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.docker
+}
+
+func (a *API) dockerUp() bool { return a.GetRuntimeStatus().Available }
 
 // GetDeployments returns every topology that is currently applied, with its
 // phase and per-node status, so the webview can pick up where the engine is.
@@ -162,11 +178,17 @@ func (a *API) PlanApply(t spec.Topology) (planner.Plan, error) {
 // Apply executes the plan for the topology named in t, next to whatever
 // else is running; it returns when the plan finishes or fails.
 func (a *API) Apply(t spec.Topology) error {
+	if !a.dockerUp() {
+		return ErrNoDocker
+	}
 	return a.eng.Apply(a.context(), t)
 }
 
 // Teardown destroys everything running under the named topology.
 func (a *API) Teardown(name string) error {
+	if !a.dockerUp() {
+		return ErrNoDocker
+	}
 	return a.eng.Teardown(a.context(), name)
 }
 
@@ -247,6 +269,9 @@ func (a *API) ListScenarios() []tests.Scenario {
 // StartTest runs a scenario against a template; params override the
 // scenario's defaults.
 func (a *API) StartTest(scenario string, template spec.Topology, params map[string]any) (string, error) {
+	if !a.dockerUp() {
+		return "", ErrNoDocker
+	}
 	return a.tests.Start(a.context(), scenario, template, params)
 }
 

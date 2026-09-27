@@ -1,6 +1,7 @@
 import { ReactFlowProvider } from '@xyflow/react'
 import { useEffect } from 'react'
 import { Canvas } from './components/Canvas'
+import { DockerNotice } from './components/DockerNotice'
 import { Drawer } from './components/Drawer'
 import { Inspector } from './components/Inspector'
 import { LeftPanel } from './components/LeftPanel'
@@ -54,6 +55,7 @@ export default function App() {
       </div>
       <div className="chrome">
         <header className="panel panel-top">
+          <DockerNotice />
           <Toolbar />
         </header>
         <div className="slot slot-left">

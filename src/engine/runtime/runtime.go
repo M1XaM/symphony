@@ -1,6 +1,6 @@
 // Package runtime abstracts the container backend. The engine only talks to
-// the Runtime interface; FakeRuntime simulates containers in memory and
-// DockerRuntime drives the Docker Engine API.
+// the Runtime interface; DockerRuntime implements it on the Docker Engine
+// API, which is the only backend Symphony runs on.
 package runtime
 
 import (
@@ -97,7 +97,7 @@ type HostLister interface {
 }
 
 // LogFollower is implemented by runtimes that can stream a container's
-// output as it is written (Docker does; the fake has no real output). fn is
+// output as it is written. fn is
 // called once per line and must not block for long; the call returns when
 // the stream ends or ctx is cancelled.
 type LogFollower interface {
@@ -117,9 +117,6 @@ type Stats struct {
 
 // Runtime is the container backend contract.
 type Runtime interface {
-	// Kind names the backend: "fake" or "docker".
-	Kind() string
-
 	EnsureNetwork(ctx context.Context, name string) error
 	RemoveNetwork(ctx context.Context, name string) error
 
@@ -146,7 +143,7 @@ type Runtime interface {
 }
 
 // StateListener is implemented by runtimes that can push state changes
-// (the fake does; Docker does via the events API). The engine registers
+// (Docker does, through its events API). The engine registers
 // itself so the UI animates without polling.
 type StateListener interface {
 	OnStateChange(fn func(Container))

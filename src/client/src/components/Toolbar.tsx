@@ -1,4 +1,4 @@
-import { selectBusy, selectIsApplied, selectPhase, useSymphonyStore } from '../store/useSymphonyStore'
+import { selectBusy, selectDockerUp, selectIsApplied, selectPhase, useSymphonyStore } from '../store/useSymphonyStore'
 
 const PHASE_LABEL: Record<string, string> = {
   idle: 'idle',
@@ -17,6 +17,7 @@ export function Toolbar() {
   const applied = useSymphonyStore(selectIsApplied)
   const busy = useSymphonyStore(selectBusy)
   const runtime = useSymphonyStore((s) => s.runtime)
+  const dockerUp = useSymphonyStore(selectDockerUp)
   const validation = useSymphonyStore((s) => s.validation)
   const validate = useSymphonyStore((s) => s.validate)
   const planApply = useSymphonyStore((s) => s.planApply)
@@ -38,8 +39,8 @@ export function Toolbar() {
         aria-label="topology name"
       />
       {runtime ? (
-        <span className={`pill pill-runtime-${runtime.kind}`} title={runtime.detail}>
-          {runtime.kind === 'docker' ? 'docker' : 'simulated'}
+        <span className={`pill ${runtime.available ? 'pill-running' : 'pill-failed'}`} title={runtime.detail}>
+          {runtime.available ? 'docker' : 'no docker'}
         </span>
       ) : null}
       <div className="toolbar-spacer" />
@@ -52,10 +53,16 @@ export function Toolbar() {
       <button type="button" className="btn" onClick={planApply} disabled={busy}>
         Plan
       </button>
-      <button type="button" className="btn btn-accent" onClick={apply} disabled={busy}>
+      <button type="button" className="btn btn-accent" onClick={apply} disabled={busy || !dockerUp} title={dockerUp ? undefined : 'needs Docker'}>
         Apply
       </button>
-      <button type="button" className="btn" onClick={teardown} disabled={busy || !applied} title={applied ? `tear down "${name}"` : 'nothing running under this name'}>
+      <button
+        type="button"
+        className="btn"
+        onClick={teardown}
+        disabled={busy || !applied || !dockerUp}
+        title={!dockerUp ? 'needs Docker' : applied ? `tear down "${name}"` : 'nothing running under this name'}
+      >
         Teardown
       </button>
       <span className={`pill pill-${phase}`}>{PHASE_LABEL[phase] ?? phase}</span>

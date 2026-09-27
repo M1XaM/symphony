@@ -146,8 +146,10 @@ export interface LogStreamState {
   enabled: boolean
 }
 
-export interface RuntimeInfo {
-  kind: 'docker' | 'fake'
+/** Whether the Docker daemon answers: the API version when it does, the
+ *  reason when it does not. */
+export interface RuntimeStatus {
+  available: boolean
   detail: string
 }
 
@@ -291,7 +293,6 @@ export interface MetricsEvent {
   active_faults: number
   sagas_ok: number
   sagas_failed: number
-  source: 'blocks' | 'mock'
 }
 
 export interface ContainerStatsEvent {
@@ -373,7 +374,6 @@ interface RunPoint {
 
 export interface Run extends RunSummary {
   params: Record<string, unknown>
-  runtime: string
   phases: { name: string; start_s: number; end_s: number }[]
   series: Record<string, RunPoint[]>
   summary: Record<string, number>

@@ -36,7 +36,7 @@ export function GetPresets():Promise<Array<spec.Topology>>;
 
 export function GetRun(arg1:string):Promise<tests.Run>;
 
-export function GetRuntimeInfo():Promise<api.RuntimeInfo>;
+export function GetRuntimeStatus():Promise<events.RuntimeStatusPayload>;
 
 export function GetUserTemplates():Promise<Array<spec.Topology>>;
 

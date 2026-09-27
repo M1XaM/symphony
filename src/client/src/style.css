@@ -122,6 +122,27 @@ button {
   grid-row: 1;
 }
 
+/* no Docker: a strip across the top of the toolbar panel */
+.docker-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--err);
+  background: rgba(248, 81, 73, 0.12);
+  user-select: text;
+}
+
+.docker-notice-title {
+  color: var(--err);
+  font-weight: 600;
+}
+
+.docker-notice-detail {
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
 .slot {
   position: relative;
   display: flex;
@@ -1407,16 +1428,6 @@ input[type='checkbox'] {
 
 .dot-degraded {
   background: var(--warn);
-}
-
-.pill-runtime-docker {
-  color: var(--ok);
-  border-color: var(--ok);
-}
-
-.pill-runtime-fake {
-  color: var(--warn);
-  border-color: var(--warn);
 }
 
 .kind-chip.kind-edge {

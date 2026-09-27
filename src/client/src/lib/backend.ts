@@ -19,7 +19,7 @@ import {
   type Resources,
   type Run,
   type RunSummary,
-  type RuntimeInfo,
+  type RuntimeStatus,
   type Scenario,
   type Topology,
   type ValidationError,
@@ -38,8 +38,8 @@ export function hasBackend(): boolean {
 }
 
 export const backend = {
-  getRuntimeInfo(): Promise<RuntimeInfo> {
-    return API.GetRuntimeInfo() as unknown as Promise<RuntimeInfo>
+  getRuntimeStatus(): Promise<RuntimeStatus> {
+    return API.GetRuntimeStatus() as unknown as Promise<RuntimeStatus>
   },
   async getDeployments(): Promise<DeploymentInfo[]> {
     const list = (await API.GetDeployments()) as unknown as DeploymentInfo[]

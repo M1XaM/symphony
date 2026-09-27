@@ -1,14 +1,12 @@
 // Package metrics produces the realtime sample streams shown in the UI: the
 // per-deployment run metrics (metrics:tick) and the per-edge link health
-// that colours the map (link:health). With block containers the numbers
-// come from the blocks' own counters, scraped every interval; with the
-// fake runtime a mock derived from engine state keeps the UI alive.
+// that colours the map (link:health). The numbers come from the blocks' own
+// counters, scraped every interval.
 package metrics
 
 import (
 	"context"
 	"math"
-	"math/rand"
 	"sync"
 	"time"
 
@@ -16,7 +14,6 @@ import (
 	"symphony/engine/blockclient"
 	"symphony/engine/core"
 	"symphony/engine/events"
-	"symphony/engine/spec"
 )
 
 // Thresholds on a link's error rate (share of requests or messages that were
@@ -46,9 +43,6 @@ type Collector struct {
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
-	rng    *rand.Rand
-	base   float64
-	window []float64
 	// last scrape per container, for deltas
 	prev map[*blockclient.Client]scrape
 	// error-rate memory per edge so a link without traffic keeps its colour
@@ -65,8 +59,6 @@ func NewCollector(bus *events.Bus, interval time.Duration, eng *core.Engine) *Co
 		bus:      bus,
 		interval: interval,
 		eng:      eng,
-		rng:      rand.New(rand.NewSource(time.Now().UnixNano())),
-		base:     42,
 		prev:     map[*blockclient.Client]scrape{},
 		lastLink: map[string]map[string]events.LinkHealthEntry{},
 	}
@@ -107,25 +99,10 @@ func (c *Collector) loop(ctx context.Context) {
 func (c *Collector) tick(ctx context.Context) {
 	snaps := c.eng.Snapshot()
 	now := time.Now().UnixMilli()
-	all := events.MetricsPayload{Deployment: "", Ts: now, Source: "blocks"}
-	anyBlocks := false
+	all := events.MetricsPayload{Deployment: "", Ts: now}
 	var aggLat []float64
 	for _, snap := range snaps {
-		hasClients := false
-		for _, n := range snap.Nodes {
-			if len(n.Clients) > 0 {
-				hasClients = true
-				break
-			}
-		}
-		var p events.MetricsPayload
-		var links events.LinkHealthPayload
-		if hasClients {
-			anyBlocks = true
-			p, links = c.scrapeDeployment(ctx, snap)
-		} else {
-			p, links = c.mockDeployment(snap)
-		}
+		p, links := c.scrapeDeployment(ctx, snap)
 		p.Ts, links.Ts = now, now
 		c.bus.Publish(events.MetricsTick, p)
 		c.bus.Publish(events.LinkHealth, links)
@@ -142,9 +119,6 @@ func (c *Collector) tick(ctx context.Context) {
 			all.P99Ms = p.P99Ms
 		}
 	}
-	if !anyBlocks {
-		all.Source = "mock"
-	}
 	if len(aggLat) > 0 {
 		s := 0.0
 		for _, v := range aggLat {
@@ -154,9 +128,6 @@ func (c *Collector) tick(ctx context.Context) {
 	}
 	if all.SagasOK+all.SagasFailed > 0 {
 		all.ErrorRate = round3(float64(all.SagasFailed) / float64(all.SagasOK+all.SagasFailed))
-	}
-	if len(snaps) == 0 {
-		all = c.idleSample(now)
 	}
 	c.bus.Publish(events.MetricsTick, all)
 	c.prune(snaps)
@@ -201,7 +172,7 @@ type delta struct {
 // scrapeDeployment reads every block's counters and derives the deployment's
 // sample and per-edge link health from the deltas since the last scrape.
 func (c *Collector) scrapeDeployment(ctx context.Context, snap core.DeploymentSnapshot) (events.MetricsPayload, events.LinkHealthPayload) {
-	p := events.MetricsPayload{Deployment: snap.Name, Source: "blocks", ActiveFaults: snap.Faults}
+	p := events.MetricsPayload{Deployment: snap.Name, ActiveFaults: snap.Faults}
 	links := events.LinkHealthPayload{Deployment: snap.Name, Links: map[string]events.LinkHealthEntry{}}
 	perEdge := map[string]*delta{}
 	var mu sync.Mutex
@@ -364,125 +335,6 @@ func counterValue(doc bmetrics.Document, name string, labels bmetrics.Labels) in
 		}
 	}
 	return 0
-}
-
-// --- mock path (fake runtime) ----------------------------------------------
-
-func (c *Collector) idleSample(now int64) events.MetricsPayload {
-	in := c.eng.MetricInputs()
-	return c.mockSample("", in, now)
-}
-
-func (c *Collector) mockSample(name string, in core.MetricInputs, now int64) events.MetricsPayload {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	target := 42.0
-	if in.Running {
-		target = 55 + 6*float64(in.Total-in.Healthy)
-	}
-	target += 90 * float64(in.ActiveFaults)
-	c.base += (target - c.base) * 0.15
-	latency := c.base + c.rng.NormFloat64()*4
-	if c.rng.Float64() < 0.04 {
-		latency += 40 + c.rng.Float64()*80
-	}
-	latency = math.Max(1, latency)
-	c.window = append(c.window, latency)
-	if len(c.window) > 120 {
-		c.window = c.window[1:]
-	}
-	throughput := 0.0
-	if in.Running && in.Healthy > 0 {
-		throughput = 120*float64(in.Healthy)/math.Max(1, float64(in.Total)) + c.rng.NormFloat64()*6
-	}
-	lag := 0
-	if in.Running {
-		lag = int(math.Max(0, 12+float64(in.ActiveFaults)*300+c.rng.NormFloat64()*8))
-	}
-	cpu := 4 + c.rng.NormFloat64()*1.5
-	if in.Running {
-		cpu = 18 + 7*float64(in.Healthy) + c.rng.NormFloat64()*3
-	}
-	return events.MetricsPayload{
-		Deployment:   name,
-		Ts:           now,
-		LatencyMs:    round1(latency),
-		P99Ms:        round1(percentile(c.window, 0.99)),
-		ConsumerLag:  lag,
-		SagasPerSec:  round1(math.Max(0, throughput)),
-		CPUPct:       round1(math.Min(100, math.Max(0, cpu))),
-		ActiveFaults: in.ActiveFaults,
-		Source:       "mock",
-	}
-}
-
-func (c *Collector) mockDeployment(snap core.DeploymentSnapshot) (events.MetricsPayload, events.LinkHealthPayload) {
-	in := core.MetricInputs{Running: snap.Phase == core.PhaseRunning || snap.Phase == core.PhaseApplying, ActiveFaults: snap.Faults}
-	for _, n := range snap.Nodes {
-		in.Total++
-		if n.State == "healthy" {
-			in.Healthy++
-		}
-	}
-	p := c.mockSample(snap.Name, in, 0)
-	links := events.LinkHealthPayload{Deployment: snap.Name, Links: map[string]events.LinkHealthEntry{}}
-	for _, li := range c.eng.LinkInputs() {
-		if li.Deployment != snap.Name {
-			continue
-		}
-		rate := c.mockErrorRate(li)
-		links.Links[li.EdgeID] = events.LinkHealthEntry{ErrorRate: round3(rate), Level: Level(rate), RPS: round1(p.SagasPerSec)}
-	}
-	return p, links
-}
-
-func (c *Collector) mockErrorRate(in core.LinkInput) float64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	rate := 0.002 + c.rng.Float64()*0.013
-	for _, s := range in.States {
-		switch s {
-		case "healthy", "degraded":
-		case "starting", "pending":
-			rate += 0.10 + c.rng.Float64()*0.10
-		default:
-			rate = 1
-		}
-	}
-	for _, f := range in.Faults {
-		switch f.Kind {
-		case spec.FaultDrop:
-			r, _ := f.Params["rate"].(float64)
-			if r <= 0 {
-				r = 0.1
-			}
-			rate += r
-		case spec.FaultLatency, spec.FaultTimeout, spec.FaultError, spec.FaultSlow:
-			rate += 0.06 + c.rng.Float64()*0.04
-		case spec.FaultCPU, spec.FaultMemory:
-			rate += 0.02 + c.rng.Float64()*0.03
-		case spec.FaultPartition, spec.FaultKill, spec.FaultPause, spec.FaultStall, spec.FaultCrash:
-			rate = 1
-		}
-	}
-	return math.Min(1, math.Max(0, rate))
-}
-
-func percentile(xs []float64, p float64) float64 {
-	if len(xs) == 0 {
-		return 0
-	}
-	sorted := append([]float64(nil), xs...)
-	for i := 1; i < len(sorted); i++ {
-		for j := i; j > 0 && sorted[j-1] > sorted[j]; j-- {
-			sorted[j-1], sorted[j] = sorted[j], sorted[j-1]
-		}
-	}
-	idx := int(math.Ceil(p*float64(len(sorted)))) - 1
-	if idx < 0 {
-		idx = 0
-	}
-	return sorted[idx]
 }
 
 func round1(x float64) float64 { return math.Round(x*10) / 10 }

@@ -70,7 +70,7 @@ var (
 	ErrNodeNotRunning = errors.New("engine: node is not running; apply the topology first")
 	ErrUnknownHotKey  = errors.New("engine: unknown hot config key")
 	ErrValidation     = errors.New("engine: topology failed validation")
-	ErrNoAdmin        = errors.New("engine: node has no reachable admin port (fake runtime?)")
+	ErrNoAdmin        = errors.New("engine: node has no reachable admin port")
 )
 
 const (
@@ -213,71 +213,6 @@ func (e *Engine) infoLocked(d *deployment) DeploymentInfo {
 		st[k] = *v
 	}
 	return DeploymentInfo{Name: d.name, Phase: d.phase, Network: d.network, Topology: d.current.Clone(), Statuses: st}
-}
-
-// MetricInputs feeds the mock metrics path so its numbers react to what
-// the engine is doing, summed over every deployment.
-type MetricInputs struct {
-	Running      bool
-	Total        int
-	Healthy      int
-	ActiveFaults int
-}
-
-func (e *Engine) MetricInputs() MetricInputs {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	var in MetricInputs
-	for _, d := range e.deps {
-		if d.phase == PhaseRunning || d.phase == PhaseApplying {
-			in.Running = true
-		}
-		for _, s := range d.statuses {
-			in.Total++
-			if s.State == string(runtime.StateHealthy) {
-				in.Healthy++
-			}
-		}
-		for _, fs := range d.faults {
-			in.ActiveFaults += len(fs)
-		}
-	}
-	return in
-}
-
-// LinkInput is what the mock metrics path needs to judge one edge.
-type LinkInput struct {
-	Deployment string
-	EdgeID     string
-	States     []string
-	Faults     []spec.FaultSpec
-}
-
-// LinkInputs returns one entry per edge of every live deployment.
-func (e *Engine) LinkInputs() []LinkInput {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	var out []LinkInput
-	for _, d := range e.deps {
-		if d.phase != PhaseRunning && d.phase != PhaseApplying {
-			continue
-		}
-		for _, edge := range d.current.Edges {
-			in := LinkInput{Deployment: d.name, EdgeID: edge.ID}
-			for _, id := range []string{edge.From, edge.To} {
-				state := string(runtime.StatePending)
-				if st := d.statuses[id]; st != nil {
-					state = st.State
-				}
-				in.States = append(in.States, state)
-				for _, f := range d.faults[id] {
-					in.Faults = append(in.Faults, f.FaultSpec)
-				}
-			}
-			out = append(out, in)
-		}
-	}
-	return out
 }
 
 // NodeSnapshot is what the collector scrapes for one node.
@@ -1296,7 +1231,8 @@ func round1(x float64) float64 { return float64(int(x*10)) / 10 }
 
 // Adopt rebuilds deployments from containers the runtime still has from a
 // previous run of Symphony (same owner id). Containers of deployments no
-// record exists for are removed.
+// record exists for are removed. Deployments the engine already tracks are
+// left alone, so it can run again whenever the daemon comes back.
 func (e *Engine) Adopt(ctx context.Context) {
 	list, err := e.rt.List(ctx)
 	if err != nil {
@@ -1310,6 +1246,9 @@ func (e *Engine) Adopt(ctx context.Context) {
 		}
 	}
 	for slug, cs := range bySlug {
+		if e.tracks(slug) {
+			continue
+		}
 		rec, err := e.store.load(slug)
 		if err != nil {
 			e.log("warn", "engine", fmt.Sprintf("removing %d orphaned container(s) of %q (no deployment record)", len(cs), slug))
@@ -1383,6 +1322,18 @@ func (e *Engine) containersFor(depName, nodeID string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// tracks reports whether a deployment with this slug is known.
+func (e *Engine) tracks(slug string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, d := range e.deps {
+		if d.slug == slug {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *Engine) lookup(name string) *deployment {

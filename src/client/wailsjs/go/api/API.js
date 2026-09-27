@@ -54,8 +54,8 @@ export function GetRun(arg1) {
   return window['go']['api']['API']['GetRun'](arg1);
 }
 
-export function GetRuntimeInfo() {
-  return window['go']['api']['API']['GetRuntimeInfo']();
+export function GetRuntimeStatus() {
+  return window['go']['api']['API']['GetRuntimeStatus']();
 }
 
 export function GetUserTemplates() {

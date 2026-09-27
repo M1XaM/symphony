@@ -23,6 +23,7 @@ const (
 	ContainerStats Type = "container:stats" // ContainerStatsPayload, one per container every second
 	TestProgress   Type = "test:progress"   // TestProgressPayload, while a scenario runs
 	TestDone       Type = "test:done"       // TestDonePayload
+	RuntimeStatus  Type = "runtime:status"  // RuntimeStatusPayload, whenever the Docker daemon comes or goes
 )
 
 // Event is the envelope delivered to subscribers.
@@ -44,6 +45,13 @@ type ProgressPayload struct {
 	Status     string `json:"status"` // started | done | failed
 	Message    string `json:"message,omitempty"`
 	Elapsed    int64  `json:"elapsed_ms"`
+}
+
+// RuntimeStatusPayload says whether the Docker daemon answers. Detail is the
+// daemon's API version when it does and the reason when it does not.
+type RuntimeStatusPayload struct {
+	Available bool   `json:"available"`
+	Detail    string `json:"detail"`
 }
 
 // LogPayload is a free-form log line.
@@ -131,7 +139,6 @@ type MetricsPayload struct {
 	ActiveFaults int     `json:"active_faults"`
 	SagasOK      int64   `json:"sagas_ok"`
 	SagasFailed  int64   `json:"sagas_failed"`
-	Source       string  `json:"source"` // blocks | mock
 }
 
 // LinkLevel classifies a link's error rate for the map: ok (green), warn

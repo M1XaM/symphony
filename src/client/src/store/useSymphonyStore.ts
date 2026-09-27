@@ -12,6 +12,7 @@ import {
   type ContainerStatsEvent,
   type ControlCommand,
   type ControlResult,
+  type DeploymentInfo,
   type FaultSpec,
   type HostStatsEvent,
   type LinkHealthEntry,
@@ -32,7 +33,7 @@ import {
   type Resources,
   type Run,
   type RunSummary,
-  type RuntimeInfo,
+  type RuntimeStatus,
   type Scenario,
   type TestDoneEvent,
   type TestProgressEvent,
@@ -100,7 +101,8 @@ const TEMPLATES_KEY = 'symphony.templates'
 
 export interface SymphonyState {
   initialized: boolean
-  runtime: RuntimeInfo | null
+  /** Whether the Docker daemon answers; null until the backend has said. */
+  runtime: RuntimeStatus | null
   topology: Topology
   /** bumps whenever a whole topology is swapped in, so the canvas re-fits */
   loadSeq: number
@@ -146,6 +148,7 @@ export interface SymphonyState {
   compareRuns: Run[]
 
   init(): Promise<void>
+  refreshDeployments(): Promise<void>
   loadTemplate(name: string): void
   setName(name: string): void
   addNode(kind: NodeKind, position: Position): void
@@ -248,6 +251,10 @@ function patchDeployment(
 ): Record<string, Deployment> {
   const cur = deployments[name] ?? newDeployment(name)
   return { ...deployments, [name]: { ...cur, ...patch(cur) } }
+}
+
+function freshDeployment(d: DeploymentInfo): Deployment {
+  return { name: d.name, phase: d.phase, statuses: d.statuses, links: {}, busy: false, containers: {} }
 }
 
 function dropDeployment(deployments: Record<string, Deployment>, name: string): Record<string, Deployment> {
@@ -411,6 +418,12 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
       warn('ui', err)
     }
 
+    onEvent<RuntimeStatus>('runtime:status', (r) => {
+      const was = get().runtime?.available
+      set({ runtime: r })
+      // the engine has just adopted whatever the daemon still runs
+      if (r.available && !was) void get().refreshDeployments()
+    })
     onEvent<ProgressEvent>('apply:progress', (p) => {
       queue((s) => (p.deployment === s.topology.name ? { opStatus: { ...s.opStatus, [p.op_id]: p.status } } : {}))
       get().appendLog(progressLine(p))
@@ -509,15 +522,13 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
 
     try {
       const [runtime, presets, running, hostStats] = await Promise.all([
-        backend.getRuntimeInfo(),
+        backend.getRuntimeStatus(),
         backend.getPresets(),
         backend.getDeployments(),
         backend.getHostStats(),
       ])
       const deployments: Record<string, Deployment> = {}
-      for (const d of running) {
-        deployments[d.name] = { name: d.name, phase: d.phase, statuses: d.statuses, links: {}, busy: false, containers: {} }
-      }
+      for (const d of running) deployments[d.name] = freshDeployment(d)
       set({ runtime, presets, deployments, hostStats: hostStats.slice(-HOST_STATS_CAP) })
       if (running.length > 0) {
         set((s) => ({ topology: running[0].topology, loadSeq: s.loadSeq + 1 }))
@@ -551,6 +562,22 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
       await get().refreshRuns()
     } catch (err) {
       warn('tests', err)
+    }
+  },
+
+  async refreshDeployments() {
+    try {
+      const running = await backend.getDeployments()
+      set((s) => {
+        const deployments: Record<string, Deployment> = {}
+        for (const d of running) {
+          const prev = s.deployments[d.name]
+          deployments[d.name] = prev ? { ...prev, phase: d.phase, statuses: d.statuses } : freshDeployment(d)
+        }
+        return { deployments }
+      })
+    } catch (err) {
+      warn('engine', err)
     }
   },
 
@@ -1060,6 +1087,10 @@ export function selectMetrics(s: SymphonyState): MetricsEvent | null {
 
 export function selectPhase(s: SymphonyState): Phase {
   return selectDeployment(s)?.phase ?? 'idle'
+}
+
+export function selectDockerUp(s: SymphonyState): boolean {
+  return s.runtime?.available === true
 }
 
 export function selectBusy(s: SymphonyState): boolean {
