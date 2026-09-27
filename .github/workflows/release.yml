@@ -1,5 +1,6 @@
 # Builds Symphony for Linux and Windows when a vX.Y.Z tag is pushed (see
-# `make tag`) and publishes both binaries as a GitHub Release. Nothing is
+# `make tag`) and publishes the binaries (the window and symphony-cli for
+# each) as a GitHub Release. Nothing is
 # published unless the release gate passes: neither binary may start with a
 # terminal or console window.
 #
@@ -45,7 +46,9 @@ jobs:
           mkdir dist
           cp bin/symphony "dist/symphony-$VERSION-linux-amd64"
           cp bin/symphony.exe "dist/symphony-$VERSION-windows-amd64.exe"
-          chmod +x "dist/symphony-$VERSION-linux-amd64"
+          cp bin/symphony-cli "dist/symphony-cli-$VERSION-linux-amd64"
+          cp bin/symphony-cli.exe "dist/symphony-cli-$VERSION-windows-amd64.exe"
+          chmod +x "dist/symphony-$VERSION-linux-amd64" "dist/symphony-cli-$VERSION-linux-amd64"
           (cd dist && sha256sum -- * > SHA256SUMS)
           ls -l dist
 
@@ -58,6 +61,15 @@ jobs:
             libwebkit2gtk-4.1-0 xvfb xauth shared-mime-info libglib2.0-bin file python3 procps
           .github/scripts/verify-release.sh \
             "dist/symphony-$VERSION-linux-amd64" "dist/symphony-$VERSION-windows-amd64.exe"
+
+      - name: CLI smoke test
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cli="dist/symphony-cli-$VERSION-linux-amd64"
+          "$cli" help >/dev/null
+          "$cli" --db "$RUNNER_TEMP/cli.db" templates
+          "$cli" --db "$RUNNER_TEMP/cli.db" validate "Orchestration (saga)"
 
       - uses: actions/upload-artifact@v7
         with:

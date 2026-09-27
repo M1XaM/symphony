@@ -962,7 +962,9 @@ func (e *Engine) blockFault(ctx context.Context, clients []*blockclient.Client, 
 	return id, nil
 }
 
-// ClearFaults clears every fault on a node, runtime and block ones alike.
+// ClearFaults clears every fault on a node, runtime and block ones alike,
+// including ones another process injected (the CLI, a previous session):
+// whatever state a container was left in by a fault is undone too.
 func (e *Engine) ClearFaults(ctx context.Context, depName, nodeID string) error {
 	d := e.lookup(depName)
 	if d == nil {
@@ -973,6 +975,21 @@ func (e *Engine) ClearFaults(ctx context.Context, depName, nodeID string) error 
 	e.mu.Unlock()
 	for _, f := range list {
 		e.clearFault(d, nodeID, f, false)
+	}
+	for _, name := range e.containersFor(d.name, nodeID) {
+		c, err := e.rt.Inspect(ctx, name)
+		if err != nil {
+			continue
+		}
+		switch {
+		case c.State == runtime.StatePaused:
+			_ = e.rt.Unpause(ctx, name)
+		case !c.Running:
+			if e.rt.Start(ctx, name) == nil {
+				e.attachClient(ctx, d, name)
+			}
+		}
+		_ = e.rt.Connect(ctx, name, d.network) // a no-op unless partitioned
 	}
 	for _, c := range e.clientsFor(d, nodeID) {
 		_, _ = c.Control(ctx, control.Command{Op: "fault.clear", Params: map[string]any{"all": true}})

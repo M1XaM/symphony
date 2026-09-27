@@ -4,7 +4,9 @@
 # host needs only Docker and make: no Go, Node, gcc or GTK/WebKit headers.
 #
 #   make                 -> make build
-#   make build           -> build in the container, place a runnable binary at ./bin/symphony
+#   make build           -> build in the container: ./bin/symphony (the window) and
+#                           ./bin/symphony-cli (the same app from a terminal)
+#   make cli             -> build only ./bin/symphony-cli
 #   make image           -> (re)build the builder image
 #   make shell           -> interactive shell in the builder container
 #   make run             -> build then launch ./bin/symphony
@@ -27,7 +29,8 @@
 #
 # Variables:
 #   PLATFORM=linux/amd64   wails target; windows/amd64 cross-compiles from the
-#                          container too (output bin/symphony.exe). darwin must
+#                          container too (output bin/symphony.exe and
+#                          bin/symphony-cli.exe). darwin must
 #                          be built natively on a Mac with `make build-local`.
 
 .DEFAULT_GOAL := build
@@ -42,11 +45,12 @@ PLATFORM ?= linux/amd64
 # as text/x-install (an INSTALL readme), and file managers then open the
 # binary as an executable text file, in an editor or a terminal.
 ifeq ($(findstring windows,$(PLATFORM)),windows)
-  BIN := $(APP).exe
-else
-  BIN := $(APP)
+  EXE := .exe
 endif
+BIN := $(APP)$(EXE)
 OUT := bin/$(BIN)
+# symphony-cli: the same package built with -tags cli (src/main_cli.go)
+CLI := $(APP)-cli$(EXE)
 
 # --- docker build ------------------------------------------------------------
 
@@ -64,7 +68,7 @@ DOCKER_RUN = $(DOCKER) run --rm \
   -v $(IMAGE)-node-modules:/work/client/node_modules \
   -e HOST_UID=$(HOST_UID) -e HOST_GID=$(HOST_GID) -e PLATFORM=$(PLATFORM)
 
-.PHONY: build image shell run clean clean-docker build-local dev deps bindings check desktop blocks test integration tag
+.PHONY: build cli image shell run clean clean-docker build-local dev deps bindings check desktop blocks test integration tag
 
 # --- block images ------------------------------------------------------------
 
@@ -90,6 +94,12 @@ integration: image
 build: image
 	$(DOCKER_RUN) $(IMAGE)
 	$(MAKE) --no-print-directory install-bin
+
+cli: image
+	$(DOCKER_RUN) -e ONLY=cli $(IMAGE)
+	mkdir -p bin
+	cp $(SRC)/build/bin/$(CLI) bin/$(CLI)
+	@echo "built bin/$(CLI)"
 
 image:
 	$(DOCKER) build -t $(IMAGE) $(SRC)/build/docker
@@ -126,6 +136,7 @@ endif
 
 build-local:
 	cd $(SRC) && $(WAILS) build $(WAILS_TAGS)
+	cd $(SRC) && CGO_ENABLED=0 go build -tags cli -trimpath -ldflags "-s -w" -o build/bin/$(CLI) .
 	$(MAKE) --no-print-directory install-bin
 
 dev:
@@ -141,7 +152,7 @@ bindings:
 	cd $(SRC) && $(WAILS) generate module
 
 check:
-	cd $(SRC) && go vet ./...
+	cd $(SRC) && go vet $(WAILS_TAGS) ./... && go vet -tags cli .
 	cd $(CLIENT) && npm run typecheck
 
 # --- release -----------------------------------------------------------------
@@ -188,13 +199,14 @@ ifeq ($(UNAME_S),Darwin)
 else
 	cp $(SRC)/build/bin/$(BIN) $(OUT)
 endif
-	chmod +x $(OUT)
+	cp $(SRC)/build/bin/$(CLI) bin/$(CLI)
+	chmod +x $(OUT) bin/$(CLI)
 ifeq ($(UNAME_S)$(findstring linux,$(PLATFORM)),Linuxlinux)
 	printf '[Desktop Entry]\nType=Application\nName=Symphony\nComment=Orchestration vs. choreography fault-injection benchmark\nExec=%s\nIcon=%s\nTerminal=false\nCategories=Development;\nStartupWMClass=$(APP)\n' \
 	  "$(CURDIR)/$(OUT)" "$(CURDIR)/$(SRC)/build/appicon.png" > $(DESKTOP)
 	chmod +x $(DESKTOP)
 endif
-	@echo "built $(OUT)"
+	@echo "built $(OUT) and bin/$(CLI)"
 
 # Registers the launcher for the current user (GNOME, KDE, XFCE all read
 # ~/.local/share/applications). Run again after moving the repository.

@@ -38,16 +38,7 @@ type Library struct {
 	path string
 }
 
-// DefaultPath is <user config dir>/symphony/templates.json.
-func DefaultPath() (string, error) {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("library: locate config directory: %w", err)
-	}
-	return filepath.Join(dir, "symphony", FileName), nil
-}
-
-// New returns a library stored at path. An empty path (DefaultPath failed)
+// New returns a library stored at path. An empty path (no config directory)
 // yields a library that reports an error from every call rather than
 // pretending to save.
 func New(path string) *Library {

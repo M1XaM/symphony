@@ -1,14 +1,14 @@
-// Package api is the Wails-bound surface. Every exported method on API is
-// callable from the frontend through the generated bindings in
-// src/client/wailsjs/go/api/API.js; keep the signatures JSON-friendly.
+// Package api is the surface both front ends drive the system through: the
+// desktop app binds it to the webview with Wails (every exported method on
+// API is callable from the frontend through the generated bindings in
+// src/client/wailsjs/go/api/API.js), and the CLI calls the same methods.
+// Keep the signatures JSON-friendly.
 package api
 
 import (
 	"context"
 	"errors"
 	"sync"
-
-	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"symphony/blocks/common/control"
 	"symphony/engine/blockclient"
@@ -23,7 +23,7 @@ import (
 	"symphony/engine/tests"
 )
 
-// API holds the engine and forwards bus events to the webview.
+// API holds the engine and forwards bus events to the front end.
 type API struct {
 	eng   *core.Engine
 	bus   *events.Bus
@@ -57,13 +57,15 @@ func New(d Deps) *API {
 		docker: events.RuntimeStatusPayload{Detail: "checking for the Docker daemon"}}
 }
 
-// Startup wires the event bus to Wails. It is a package function rather
-// than a method so it is not exposed as a binding.
-func Startup(a *API, ctx context.Context) {
+// Startup starts a session: calls run under ctx, and emit (when not nil)
+// receives every bus event by name; the desktop app passes Wails'
+// EventsEmit. It is a package function rather than a method so it is not
+// exposed as a binding.
+func Startup(a *API, ctx context.Context, emit func(name string, payload any)) {
 	a.ctx = ctx
-	a.unsub = a.bus.Subscribe(func(ev events.Event) {
-		wailsrt.EventsEmit(ctx, string(ev.Type), ev.Payload)
-	})
+	if emit != nil {
+		a.unsub = a.bus.Subscribe(func(ev events.Event) { emit(string(ev.Type), ev.Payload) })
+	}
 	a.bus.Log("info", "engine", "symphony ready")
 }
 

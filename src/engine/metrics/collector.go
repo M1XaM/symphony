@@ -202,10 +202,12 @@ func (c *Collector) scrapeDeployment(ctx context.Context, snap core.DeploymentSn
 				prev, had := c.prev[cl]
 				c.prev[cl] = scrape{at: now, doc: doc}
 				c.mu.Unlock()
-				secs := c.interval.Seconds()
-				if had {
-					secs = now.Sub(prev.at).Seconds()
+				if !had {
+					// the counters hold everything since the container
+					// started: the first scrape is only the baseline
+					return
 				}
+				secs := now.Sub(prev.at).Seconds()
 				mu.Lock()
 				defer mu.Unlock()
 				// per-edge outbound results from the sender
@@ -221,10 +223,7 @@ func (c *Collector) scrapeDeployment(ctx context.Context, snap core.DeploymentSn
 							d = &delta{secs: secs}
 							perEdge[edge] = d
 						}
-						v := float64(ctr.Value)
-						if had {
-							v -= float64(counterValue(prev.doc, ctr.Name, ctr.Labels))
-						}
+						v := increase(prev.doc, ctr)
 						d.total += v
 						if ctr.Labels["result"] == "ok" {
 							d.ok += v
@@ -233,10 +232,7 @@ func (c *Collector) scrapeDeployment(ctx context.Context, snap core.DeploymentSn
 						}
 					case "saga_total":
 						sagaSeen = true
-						v := float64(ctr.Value)
-						if had {
-							v -= float64(counterValue(prev.doc, ctr.Name, ctr.Labels))
-						}
+						v := increase(prev.doc, ctr)
 						if ctr.Labels["outcome"] == "ok" {
 							sagaOK += v
 						} else if ctr.Labels["outcome"] != "rejected" {
@@ -316,6 +312,16 @@ func (c *Collector) scrapeDeployment(ctx context.Context, snap core.DeploymentSn
 	p.ConsumerLag = int(lag)
 	p.CPUPct = round1(p.CPUPct)
 	return p, links
+}
+
+// increase is how much a counter grew since the previous document; a block
+// that restarted starts its counters from zero again.
+func increase(prev bmetrics.Document, ctr bmetrics.CounterSnapshot) float64 {
+	v := ctr.Value - counterValue(prev, ctr.Name, ctr.Labels)
+	if v < 0 {
+		v = ctr.Value
+	}
+	return float64(v)
 }
 
 func counterValue(doc bmetrics.Document, name string, labels bmetrics.Labels) int64 {

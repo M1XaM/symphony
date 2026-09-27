@@ -43,15 +43,21 @@ type Streamer struct {
 	follower  runtime.LogFollower // nil when the runtime cannot stream
 	lister    runtime.HostLister  // the cheap "what is running" call
 	following map[string]*tail    // container id -> the goroutine tailing it
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	// when the mirror (re)started, and when each container's last stream
+	// ended: a stream starts from the latest of those and the container's
+	// creation, so nothing is replayed and nothing printed in between (a
+	// new container's first lines, a restarted one's) is lost
+	since  time.Time
+	ended  map[string]time.Time
+	cancel context.CancelFunc
+	wg     sync.WaitGroup
 }
 
 // tail is one container's follower, kept so it can be cancelled by id.
 type tail struct{ cancel context.CancelFunc }
 
 func New(rt runtime.Runtime, bus *events.Bus) *Streamer {
-	s := &Streamer{bus: bus, enabled: true, following: map[string]*tail{}}
+	s := &Streamer{bus: bus, enabled: true, following: map[string]*tail{}, ended: map[string]time.Time{}}
 	if f, ok := rt.(runtime.LogFollower); ok {
 		s.follower = f
 	}
@@ -84,6 +90,9 @@ func (s *Streamer) SetEnabled(on bool) {
 	s.mu.Lock()
 	changed := s.enabled != on
 	s.enabled = on
+	if changed && on {
+		s.since = time.Now()
+	}
 	var stop []context.CancelFunc
 	if !on {
 		for id, t := range s.following {
@@ -113,6 +122,7 @@ func (s *Streamer) Start(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
 	s.cancel = cancel
+	s.since = time.Now()
 	s.mu.Unlock()
 	s.wg.Add(1)
 	go func() {
@@ -173,13 +183,21 @@ func (s *Streamer) scan(ctx context.Context) {
 		fctx, cancel := context.WithCancel(ctx)
 		t := &tail{cancel: cancel}
 		s.following[c.ID] = t
+		since := s.since
+		if created := time.UnixMilli(c.CreatedAt); created.After(since) {
+			since = created
+		}
+		if ended := s.ended[c.ID]; ended.After(since) {
+			since = ended
+		}
 		s.mu.Unlock()
 		s.wg.Add(1)
 		go func(c runtime.HostContainer) {
 			defer s.wg.Done()
 			defer cancel()
-			s.follow(fctx, c)
+			s.follow(fctx, c, since)
 			s.mu.Lock()
+			s.ended[c.ID] = time.Now()
 			if s.following[c.ID] == t { // a restart may already own the slot
 				delete(s.following, c.ID)
 			}
@@ -195,14 +213,20 @@ func (s *Streamer) scan(ctx context.Context) {
 			delete(s.following, id)
 		}
 	}
+	// a stopped container may be started again, so its end is kept a while
+	for id, at := range s.ended {
+		if !live[id] && time.Since(at) > time.Hour {
+			delete(s.ended, id)
+		}
+	}
 	s.mu.Unlock()
 }
 
-// follow tails one container until it stops. Lines already written before the
-// stream attaches are skipped: they belong to a previous session of the app.
-func (s *Streamer) follow(ctx context.Context, c runtime.HostContainer) {
+// follow tails one container until it stops, from since on: what it wrote
+// before belongs to a previous session of the app, or was mirrored already.
+func (s *Streamer) follow(ctx context.Context, c runtime.HostContainer, since time.Time) {
 	lim := &limiter{tokens: burst, last: time.Now()}
-	err := s.follower.FollowLogs(ctx, c.Name, time.Now(), func(line string, stderr bool) {
+	err := s.follower.FollowLogs(ctx, c.Name, since, func(line string, stderr bool) {
 		s.emit(c.Name, line, stderr, lim)
 	})
 	if err != nil && ctx.Err() == nil {
