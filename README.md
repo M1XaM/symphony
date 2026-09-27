@@ -8,31 +8,31 @@ run. `symphony-cli` does all of it from a terminal, on the same state.
 
 ## Download
 
-Every `vX.Y.Z` tag publishes a release with four files (plus `SHA256SUMS`):
+Every `vX.Y.Z` tag publishes a release with one zip per platform (plus
+`SHA256SUMS`):
 
-| file | what |
-|------|------|
-| `symphony-vX.Y.Z-linux-amd64`           | the app, Linux x86-64 |
-| `symphony-vX.Y.Z-windows-amd64.exe`     | the app, Windows 10/11 x86-64 |
-| `symphony-cli-vX.Y.Z-linux-amd64`       | the command line, Linux x86-64 |
-| `symphony-cli-vX.Y.Z-windows-amd64.exe` | the command line, Windows 10/11 x86-64 |
+| archive | contains |
+|---------|----------|
+| `symphony-vX.Y.Z-linux-amd64.zip`   | `symphony` (the app) and `symphony-cli` (the command line), Linux x86-64 |
+| `symphony-vX.Y.Z-windows-amd64.zip` | `symphony.exe`, `symphony-cli.exe` and `README.txt`, Windows 10/11 x86-64 |
 
-Put the app and the CLI in the same directory: they keep their state in one
-file next to the binary (see [State](#state)), so that is how they share it.
+Each unzips to a folder of the same name. Keep the app and the CLI together
+in it: they keep their state in one file next to the binary (see
+[State](#state)), so that is how they share it.
 
 **Linux.** The binary needs glibc 2.34+ (Ubuntu 22.04, Debian 12, Fedora 35 or
 newer) with GTK 3 and WebKitGTK 4.1:
 
     sudo apt install libgtk-3-0 libwebkit2gtk-4.1-0   # Debian / Ubuntu
-    chmod +x symphony-vX.Y.Z-linux-amd64
-    ./symphony-vX.Y.Z-linux-amd64                    # or double-click it
+    unzip symphony-vX.Y.Z-linux-amd64.zip
+    ./symphony-vX.Y.Z-linux-amd64/symphony           # or double-click it
 
 It is a GUI program and never opens a terminal. Keep a name like `symphony`
 if you rename it: a file called `install` is taken for an INSTALL text file by
 the desktop, which then opens it as a script. `symphony-cli` is a static
 binary and needs nothing but Docker.
 
-**Windows.** Run the `.exe`; nothing to install. It uses the WebView2 runtime
+**Windows.** Unzip and run `symphony.exe`; nothing to install. It uses the WebView2 runtime
 that ships with Windows 10/11 (the app offers to fetch it if it is missing).
 
 **Docker** (Docker Engine on Linux, Docker Desktop on Windows) is required:
@@ -191,36 +191,40 @@ its containers are still recognised.
 The build runs inside a Docker container, so the host needs only **Docker**
 and **make**:
 
-    make                # -> ./bin/symphony and ./bin/symphony-cli
-    ./bin/symphony      # or: make run
+    make                    # -> bin/linux/ and bin/windows/
+    ./bin/linux/symphony    # or: make run
+
+    bin/
+      linux/     symphony  symphony-cli  symphony.desktop
+      windows/   symphony.exe  symphony-cli.exe
 
 | target | does |
 |--------|------|
-| `make` / `make build` | `wails build` and the CLI build in the container, then copy both to `./bin` |
-| `make cli`            | build only `./bin/symphony-cli` |
-| `make run`            | build, then launch `./bin/symphony` |
-| `make desktop`        | register `bin/symphony.desktop` with the desktop, so Symphony appears in the app grid (Linux) |
+| `make` / `make build` | `wails build` and the CLI build in the container, for Linux and Windows, into `bin/<os>/` |
+| `make cli`            | build only the `symphony-cli` binaries |
+| `make dist VERSION=vX.Y.Z` | zip `bin/` into `dist/`: the two release archives and `SHA256SUMS` |
+| `make run`            | build for Linux, then launch `bin/linux/symphony` |
+| `make desktop`        | register `bin/linux/symphony.desktop` with the desktop, so Symphony appears in the app grid (Linux) |
 | `make blocks`         | build the five block images (`symphony/<block>:dev`) |
 | `make test`           | Go unit tests + blocks contract test (blocks run as processes, no Docker) |
 | `make integration`    | engine tests against the host's Docker daemon (real containers) |
 | `make tag vX.Y.Z`     | tag HEAD and push the tag, which publishes a release (see below) |
 | `make image`          | (re)build the `symphony-builder` image from `src/build/docker` |
 | `make shell`          | interactive shell inside the builder container |
-| `make clean`          | remove `bin/`, `src/build/bin/`, `src/client/dist/` |
+| `make clean`          | remove `bin/`, `dist/`, `src/build/bin/`, `src/client/dist/` |
 | `make clean-docker`   | `clean` plus remove the builder image and cache volumes |
 
-The app is a native binary for `PLATFORM` (default `linux/amd64`), linked
-against glibc, GTK 3 and WebKitGTK 4.1 from Debian 12.
-`make PLATFORM=windows/amd64` cross-compiles `bin/symphony.exe` and
-`bin/symphony-cli.exe` from the same container. macOS cannot be
-cross-compiled without Apple's SDK; build natively on a Mac with
-`make build-local`.
+The Linux app is linked against glibc, GTK 3 and WebKitGTK 4.1 from
+Debian 12; the Windows one is cross-compiled in the same container.
+`PLATFORM=linux/amd64` (or `windows/amd64`) builds one platform only. macOS
+cannot be cross-compiled without Apple's SDK; build natively on a Mac with
+`make build-local` (output in `bin/darwin/`).
 
 The CLI is the same Go package built with a different tag: the module root
 builds the window by default and `symphony-cli` with `-tags cli`. It uses no
 webview and no cgo, so outside the container it is just
 
-    cd src && CGO_ENABLED=0 go build -tags cli -o ../bin/symphony-cli .
+    cd src && CGO_ENABLED=0 go build -tags cli -o ../bin/linux/symphony-cli .
 
 After changing anything in `src/blocks`, run `make blocks`: the app only
 builds an image itself when it is missing.
@@ -235,13 +239,13 @@ dependencies. On Debian/Ubuntu:
 Then:
 
     make deps         # go mod tidy, npm install, install the wails CLI if absent
-    make build-local  # wails build + CLI build on the host -> ./bin
+    make build-local  # wails build + CLI build on the host -> bin/<host os>/
     make dev          # wails dev with hot reload (needs a display)
     make check        # go vet (window and CLI builds) + client typecheck
     make bindings     # regenerate src/client/wailsjs after changing the Go API
 
 On Linux the Makefile adds `-tags webkit2_41` when only WebKitGTK 4.1 is
-installed. On macOS `./bin/symphony` is a launcher script next to the copied
+installed. On macOS `bin/darwin/symphony` is a launcher script next to the copied
 `.app` bundle.
 
 ### Layout
@@ -280,12 +284,13 @@ remote, then creates an annotated tag and pushes it. The push starts
    WebKit's own helper processes; the Windows binary must be a GUI-subsystem
    executable, so no console window opens with it;
 3. runs a smoke test of the Linux CLI;
-4. only if all of that passes, publishes the GitHub Release with the four
-   binaries, `SHA256SUMS` and notes generated from the commits since the
-   last tag.
+4. zips each platform (`make dist`);
+5. only if all of that passes, publishes the GitHub Release with the two
+   zips, `SHA256SUMS` and notes generated from the commits since the last
+   tag.
 
-Starting the workflow by hand from the Actions tab runs steps 1 to 3 only,
-which is a dry run of a release.
+Starting the workflow by hand from the Actions tab runs steps 1 to 4 only,
+which is a dry run of a release (the zips are kept as a workflow artifact).
 
 ## What is still simulated
 

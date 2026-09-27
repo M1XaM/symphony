@@ -26,11 +26,12 @@ echo "content type: $type"
 # Start it the way a launcher does: no terminal, no stdin, its own session.
 # It has to stay up, and everything it starts has to be WebKit's own helpers.
 # DOCKER_HOST points nowhere, so the run is the same whether or not the
-# runner has Docker: the app opens and says Docker is missing.
+# runner has Docker: the app opens and says Docker is missing. The state
+# database goes to the scratch home, not next to the binary being shipped.
 home=$(mktemp -d)
 log="$home/run.log"
 chmod +x "$linux_bin"
-HOME="$home" XDG_CONFIG_HOME="$home/config" XDG_DATA_HOME="$home/data" DOCKER_HOST="unix://$home/no-docker.sock" \
+HOME="$home" XDG_CONFIG_HOME="$home/config" XDG_DATA_HOME="$home/data" DOCKER_HOST="unix://$home/no-docker.sock" SYMPHONY_DB="$home/symphony.db" \
   setsid xvfb-run -a "$linux_bin" </dev/null >"$log" 2>&1 &
 launcher=$!
 disown

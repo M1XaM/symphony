@@ -4,16 +4,22 @@
 # host needs only Docker and make: no Go, Node, gcc or GTK/WebKit headers.
 #
 #   make                 -> make build
-#   make build           -> build in the container: ./bin/symphony (the window) and
-#                           ./bin/symphony-cli (the same app from a terminal)
-#   make cli             -> build only ./bin/symphony-cli
+#   make build           -> build in the container, for Linux and Windows:
+#                             bin/linux/symphony, bin/linux/symphony-cli
+#                             bin/windows/symphony.exe, bin/windows/symphony-cli.exe
+#                           (symphony is the window, symphony-cli the same app
+#                           from a terminal)
+#   make cli             -> build only the symphony-cli binaries
+#   make dist VERSION=vX.Y.Z
+#                        -> zip bin/ into dist/: one archive per platform, plus
+#                           SHA256SUMS (what a release publishes)
 #   make image           -> (re)build the builder image
 #   make shell           -> interactive shell in the builder container
-#   make run             -> build then launch ./bin/symphony
+#   make run             -> build for Linux, then launch bin/linux/symphony
 #   make clean           -> remove build outputs
 #   make clean-docker    -> also remove the builder image and cache volumes
-#   make desktop         -> register bin/symphony.desktop with the desktop, so the
-#                           app launches from the app grid with no terminal
+#   make desktop         -> register bin/linux/symphony.desktop with the desktop, so
+#                           the app launches from the app grid with no terminal
 #   make blocks          -> build the five block images (symphony/<block>:dev)
 #   make test            -> Go tests (blocks contract test runs the blocks as processes)
 #   make integration     -> engine tests against the host's Docker daemon
@@ -21,17 +27,16 @@
 #                           the release (.github/workflows/release.yml)
 #
 # Native targets (need a local Go/Node/Wails toolchain, see README):
-#   make build-local     -> wails build on the host
+#   make build-local     -> wails build on the host, into bin/<host os>/
 #   make dev             -> wails dev with hot reload (needs a display, so native only)
 #   make deps            -> go mod tidy + npm install (+ wails CLI if missing)
 #   make bindings        -> regenerate src/client/wailsjs from the Go API
 #   make check           -> go vet + client typecheck (no tests, by design)
 #
 # Variables:
-#   PLATFORM=linux/amd64   wails target; windows/amd64 cross-compiles from the
-#                          container too (output bin/symphony.exe and
-#                          bin/symphony-cli.exe). darwin must
-#                          be built natively on a Mac with `make build-local`.
+#   PLATFORM=linux/amd64   build that one platform only (default: linux/amd64
+#                          and windows/amd64, both from the container). darwin
+#                          must be built natively on a Mac with `make build-local`.
 
 .DEFAULT_GOAL := build
 SHELL := /bin/bash
@@ -39,16 +44,23 @@ SHELL := /bin/bash
 SRC      := src
 CLIENT   := $(SRC)/client
 APP      := symphony
-PLATFORM ?= linux/amd64
+PLATFORMS := $(or $(PLATFORM),linux/amd64 windows/amd64)
 
+# The per-platform names below are for install-bin, which runs once per
+# platform with PLATFORM set. Each platform gets its own directory,
+# bin/<os>/, with the window and the CLI side by side (they share the state
+# database next to them).
+#
 # The output must not be called "install": shared-mime-info files that name
 # as text/x-install (an INSTALL readme), and file managers then open the
 # binary as an executable text file, in an editor or a terminal.
-ifeq ($(findstring windows,$(PLATFORM)),windows)
+OS := $(firstword $(subst /, ,$(PLATFORM)))
+ifeq ($(OS),windows)
   EXE := .exe
 endif
-BIN := $(APP)$(EXE)
-OUT := bin/$(BIN)
+BIN    := $(APP)$(EXE)
+OUTDIR := bin/$(OS)
+OUT    := $(OUTDIR)/$(BIN)
 # symphony-cli: the same package built with -tags cli (src/main_cli.go)
 CLI := $(APP)-cli$(EXE)
 
@@ -66,9 +78,9 @@ DOCKER_RUN = $(DOCKER) run --rm \
   -v $(IMAGE)-go-cache:/cache/go \
   -v $(IMAGE)-npm-cache:/cache/npm \
   -v $(IMAGE)-node-modules:/work/client/node_modules \
-  -e HOST_UID=$(HOST_UID) -e HOST_GID=$(HOST_GID) -e PLATFORM=$(PLATFORM)
+  -e HOST_UID=$(HOST_UID) -e HOST_GID=$(HOST_GID)
 
-.PHONY: build cli image shell run clean clean-docker build-local dev deps bindings check desktop blocks test integration tag
+.PHONY: build cli dist image shell run clean clean-docker build-local dev deps bindings check desktop blocks test integration tag
 
 # --- block images ------------------------------------------------------------
 
@@ -92,14 +104,21 @@ integration: image
 	  go test -tags integration -count=1 -run Integration ./engine/... -v
 
 build: image
-	$(DOCKER_RUN) $(IMAGE)
-	$(MAKE) --no-print-directory install-bin
+	for p in $(PLATFORMS); do \
+	  $(DOCKER_RUN) -e PLATFORM=$$p $(IMAGE) && \
+	  $(MAKE) --no-print-directory install-bin PLATFORM=$$p || exit 1; \
+	done
 
 cli: image
-	$(DOCKER_RUN) -e ONLY=cli $(IMAGE)
-	mkdir -p bin
-	cp $(SRC)/build/bin/$(CLI) bin/$(CLI)
-	@echo "built bin/$(CLI)"
+	for p in $(PLATFORMS); do \
+	  $(DOCKER_RUN) -e PLATFORM=$$p -e ONLY=cli $(IMAGE) && \
+	  $(MAKE) --no-print-directory install-cli PLATFORM=$$p || exit 1; \
+	done
+
+# The release archives, from what `make build` left in bin/.
+dist:
+	@test -n "$(VERSION)" || { echo "usage: make dist VERSION=vX.Y.Z"; exit 1; }
+	python3 .github/scripts/package-release.py "$(VERSION)" bin dist
 
 image:
 	$(DOCKER) build -t $(IMAGE) $(SRC)/build/docker
@@ -107,11 +126,12 @@ image:
 shell: image
 	$(DOCKER_RUN) -it $(IMAGE) bash
 
-run: build
-	./$(OUT)
+run:
+	$(MAKE) --no-print-directory build PLATFORM=linux/amd64
+	./bin/linux/$(APP)
 
 clean:
-	rm -rf bin $(SRC)/build/bin $(CLIENT)/dist
+	rm -rf bin dist $(SRC)/build/bin $(CLIENT)/dist
 	mkdir -p $(CLIENT)/dist && touch $(CLIENT)/dist/.gitkeep
 
 clean-docker: clean
@@ -134,10 +154,13 @@ ifeq ($(UNAME_S),Linux)
   endif
 endif
 
+LOCAL_PLATFORM = $(shell cd $(SRC) && go env GOOS)/$(shell cd $(SRC) && go env GOARCH)
+LOCAL_EXE      = $(if $(filter windows/%,$(LOCAL_PLATFORM)),.exe)
+
 build-local:
 	cd $(SRC) && $(WAILS) build $(WAILS_TAGS)
-	cd $(SRC) && CGO_ENABLED=0 go build -tags cli -trimpath -ldflags "-s -w" -o build/bin/$(CLI) .
-	$(MAKE) --no-print-directory install-bin
+	cd $(SRC) && CGO_ENABLED=0 go build -tags cli -trimpath -ldflags "-s -w" -o build/bin/$(APP)-cli$(LOCAL_EXE) .
+	$(MAKE) --no-print-directory install-bin PLATFORM=$(LOCAL_PLATFORM)
 
 dev:
 	cd $(SRC) && $(WAILS) dev $(WAILS_TAGS)
@@ -182,31 +205,34 @@ tag:
 	git tag -a "$(VERSION)" -m "$(VERSION)"
 	git push origin "$(VERSION)"
 
-# --- shared: copy the wails output to ./bin ----------------------------------
+# --- shared: copy the build output to bin/<os>/ ------------------------------
 
 # A Linux build also writes a .desktop entry next to the binary, so `make
 # desktop` can put Symphony in the app grid. The binary is a plain GUI program
 # and never needs a terminal either way.
-DESKTOP := bin/$(APP).desktop
+DESKTOP := bin/linux/$(APP).desktop
 
-.PHONY: install-bin
-install-bin:
-	mkdir -p bin
-ifeq ($(UNAME_S),Darwin)
-	rm -rf bin/$(APP).app
-	cp -R $(SRC)/build/bin/$(APP).app bin/$(APP).app
+.PHONY: install-bin install-cli
+install-bin: install-cli
+ifeq ($(OS),darwin)
+	rm -rf $(OUTDIR)/$(APP).app
+	cp -R $(SRC)/build/bin/$(APP).app $(OUTDIR)/$(APP).app
 	printf '#!/bin/sh\nexec "$$(dirname "$$0")/$(APP).app/Contents/MacOS/$(APP)" "$$@"\n' > $(OUT)
 else
 	cp $(SRC)/build/bin/$(BIN) $(OUT)
 endif
-	cp $(SRC)/build/bin/$(CLI) bin/$(CLI)
-	chmod +x $(OUT) bin/$(CLI)
-ifeq ($(UNAME_S)$(findstring linux,$(PLATFORM)),Linuxlinux)
+	chmod +x $(OUT)
+ifeq ($(OS),linux)
 	printf '[Desktop Entry]\nType=Application\nName=Symphony\nComment=Orchestration vs. choreography fault-injection benchmark\nExec=%s\nIcon=%s\nTerminal=false\nCategories=Development;\nStartupWMClass=$(APP)\n' \
 	  "$(CURDIR)/$(OUT)" "$(CURDIR)/$(SRC)/build/appicon.png" > $(DESKTOP)
 	chmod +x $(DESKTOP)
 endif
-	@echo "built $(OUT) and bin/$(CLI)"
+	@echo "built $(OUT) and $(OUTDIR)/$(CLI)"
+
+install-cli:
+	mkdir -p $(OUTDIR)
+	cp $(SRC)/build/bin/$(CLI) $(OUTDIR)/$(CLI)
+	chmod +x $(OUTDIR)/$(CLI)
 
 # Registers the launcher for the current user (GNOME, KDE, XFCE all read
 # ~/.local/share/applications). Run again after moving the repository.
@@ -217,4 +243,4 @@ desktop: $(DESKTOP)
 	@echo "installed $(HOME)/.local/share/applications/$(APP).desktop"
 
 $(DESKTOP):
-	$(MAKE) --no-print-directory install-bin
+	$(MAKE) --no-print-directory install-bin PLATFORM=linux/amd64

@@ -1,4 +1,5 @@
 bin/
+dist/
 src/build/bin/
 src/client/dist/*
 !src/client/dist/.gitkeep
