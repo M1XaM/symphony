@@ -11,9 +11,8 @@ import (
 )
 
 var (
-	ErrNotFound     = errors.New("runtime: container not found")
-	ErrExists       = errors.New("runtime: container already exists")
-	ErrInvalidState = errors.New("runtime: invalid state transition")
+	ErrNotFound = errors.New("runtime: container not found")
+	ErrExists   = errors.New("runtime: container already exists")
 )
 
 // State is the container lifecycle state as reported by Inspect. The
@@ -93,20 +92,6 @@ type HostContainer struct {
 	Node       string   `json:"node,omitempty"`
 }
 
-// HostLister is implemented by runtimes that can enumerate every container
-// on the machine rather than only their own — what `docker ps` shows.
-type HostLister interface {
-	ListHost(ctx context.Context, all bool) ([]HostContainer, error)
-}
-
-// LogFollower is implemented by runtimes that can stream a container's
-// output as it is written. fn is
-// called once per line and must not block for long; the call returns when
-// the stream ends or ctx is cancelled.
-type LogFollower interface {
-	FollowLogs(ctx context.Context, name string, since time.Time, fn func(line string, stderr bool)) error
-}
-
 // Stats is a point-in-time resource sample.
 type Stats struct {
 	CPUPercent       float64
@@ -143,11 +128,16 @@ type Runtime interface {
 	Stats(ctx context.Context, name string) (Stats, error)
 	Logs(ctx context.Context, name string, tail int) ([]string, error)
 	List(ctx context.Context) ([]Container, error)
-}
 
-// StateListener is implemented by runtimes that can push state changes
-// (Docker does, through its events API). The engine registers
-// itself so the UI animates without polling.
-type StateListener interface {
+	// ListHost reports every container on the machine, not only this
+	// installation's, the way `docker ps` does; all includes the stopped
+	// ones (`docker ps -a`).
+	ListHost(ctx context.Context, all bool) ([]HostContainer, error)
+	// FollowLogs streams a container's output as it is written, from since
+	// on. fn is called once per line and must not block for long; the call
+	// returns when the stream ends or ctx is cancelled.
+	FollowLogs(ctx context.Context, name string, since time.Time, fn func(line string, stderr bool)) error
+	// OnStateChange registers fn for every change of a container's state,
+	// so the UI animates without polling.
 	OnStateChange(fn func(Container))
 }

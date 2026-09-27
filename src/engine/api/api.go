@@ -232,11 +232,7 @@ func (a *API) GetNodeLogs(deployment, nodeID string, n int) ([]blockclient.LogLi
 // host, newest first with the running ones on top; all=true keeps the
 // stopped ones too (`docker ps -a`).
 func (a *API) ListContainers(all bool) ([]runtime.HostContainer, error) {
-	lister, ok := a.eng.Runtime().(runtime.HostLister)
-	if !ok {
-		return []runtime.HostContainer{}, nil
-	}
-	out, err := lister.ListHost(a.context(), all)
+	out, err := a.eng.Runtime().ListHost(a.context(), all)
 	if out == nil {
 		out = []runtime.HostContainer{}
 	}
@@ -244,9 +240,9 @@ func (a *API) ListContainers(all bool) ([]runtime.HostContainer, error) {
 }
 
 // ContainerLogStream reports whether container output is being mirrored into
-// the app log, and whether the runtime can do it at all.
+// the app log.
 func (a *API) ContainerLogStream() LogStreamState {
-	return LogStreamState{Available: a.logs.Available(), Enabled: a.logs.Enabled()}
+	return LogStreamState{Enabled: a.logs.Enabled()}
 }
 
 // SetContainerLogStream turns the mirror on or off.
@@ -257,8 +253,7 @@ func (a *API) SetContainerLogStream(on bool) LogStreamState {
 
 // LogStreamState is the Log tab's view of the container log mirror.
 type LogStreamState struct {
-	Available bool `json:"available"`
-	Enabled   bool `json:"enabled"`
+	Enabled bool `json:"enabled"`
 }
 
 // --- tests --------------------------------------------------------------------

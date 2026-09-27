@@ -49,10 +49,17 @@ type Collector struct {
 	lastLink map[string]map[string]events.LinkHealthEntry
 }
 
+// scrape keeps what the next scrape of a block needs: when this one was
+// taken and the value of every counter read as a delta, by name and labels.
 type scrape struct {
-	at  time.Time
-	doc bmetrics.Document
+	at       time.Time
+	counters map[string]int64
 }
+
+// deltaCounter reports whether the collector turns a counter into a rate.
+func deltaCounter(name string) bool { return name == "link_results_total" || name == "saga_total" }
+
+func counterKey(ctr bmetrics.CounterSnapshot) string { return ctr.Name + "{" + ctr.Labels.Key() + "}" }
 
 func NewCollector(bus *events.Bus, interval time.Duration, eng *core.Engine) *Collector {
 	return &Collector{
@@ -198,9 +205,15 @@ func (c *Collector) scrapeDeployment(ctx context.Context, snap core.DeploymentSn
 					return
 				}
 				now := time.Now()
+				cur := scrape{at: now, counters: map[string]int64{}}
+				for _, ctr := range doc.Counters {
+					if deltaCounter(ctr.Name) {
+						cur.counters[counterKey(ctr)] = ctr.Value
+					}
+				}
 				c.mu.Lock()
 				prev, had := c.prev[cl]
-				c.prev[cl] = scrape{at: now, doc: doc}
+				c.prev[cl] = cur
 				c.mu.Unlock()
 				if !had {
 					// the counters hold everything since the container
@@ -223,7 +236,7 @@ func (c *Collector) scrapeDeployment(ctx context.Context, snap core.DeploymentSn
 							d = &delta{secs: secs}
 							perEdge[edge] = d
 						}
-						v := increase(prev.doc, ctr)
+						v := prev.increase(ctr)
 						d.total += v
 						if ctr.Labels["result"] == "ok" {
 							d.ok += v
@@ -232,7 +245,7 @@ func (c *Collector) scrapeDeployment(ctx context.Context, snap core.DeploymentSn
 						}
 					case "saga_total":
 						sagaSeen = true
-						v := increase(prev.doc, ctr)
+						v := prev.increase(ctr)
 						if ctr.Labels["outcome"] == "ok" {
 							sagaOK += v
 						} else if ctr.Labels["outcome"] != "rejected" {
@@ -314,33 +327,14 @@ func (c *Collector) scrapeDeployment(ctx context.Context, snap core.DeploymentSn
 	return p, links
 }
 
-// increase is how much a counter grew since the previous document; a block
-// that restarted starts its counters from zero again.
-func increase(prev bmetrics.Document, ctr bmetrics.CounterSnapshot) float64 {
-	v := ctr.Value - counterValue(prev, ctr.Name, ctr.Labels)
+// increase is how much a counter grew since this scrape; a block that
+// restarted starts its counters from zero again.
+func (prev scrape) increase(ctr bmetrics.CounterSnapshot) float64 {
+	v := ctr.Value - prev.counters[counterKey(ctr)]
 	if v < 0 {
 		v = ctr.Value
 	}
 	return float64(v)
-}
-
-func counterValue(doc bmetrics.Document, name string, labels bmetrics.Labels) int64 {
-	for _, ctr := range doc.Counters {
-		if ctr.Name != name || len(ctr.Labels) != len(labels) {
-			continue
-		}
-		match := true
-		for k, v := range labels {
-			if ctr.Labels[k] != v {
-				match = false
-				break
-			}
-		}
-		if match {
-			return ctr.Value
-		}
-	}
-	return 0
 }
 
 func round1(x float64) float64 { return math.Round(x*10) / 10 }

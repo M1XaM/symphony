@@ -170,9 +170,7 @@ func New(opts Options) *Engine {
 	if e.images == nil {
 		e.images = images.NewEnsurer(nil)
 	}
-	if l, ok := e.rt.(runtime.StateListener); ok {
-		l.OnStateChange(e.onContainerState)
-	}
+	e.rt.OnStateChange(e.onContainerState)
 	return e
 }
 
@@ -750,6 +748,11 @@ func (e *Engine) SetResources(ctx context.Context, depName, nodeID string, r spe
 	return nil
 }
 
+// readOps only read a block's state; the UI polls some of them, so they are
+// not logged.
+var readOps = map[string]bool{"load.status": true, "sagas.recent": true, "sagas.summary": true, "fault.list": true,
+	"config.get": true, "behaviour.get": true, "topics.get": true}
+
 // Control sends a raw command to every replica of a node and returns the
 // first replica's result (the UI's escape hatch: load generator, behaviour
 // editor, snapshots).
@@ -784,7 +787,7 @@ func (e *Engine) Control(ctx context.Context, depName, nodeID string, cmd contro
 	case "load.stop":
 		e.setLoad(d, nodeID, nil)
 	}
-	if cmd.Op != "load.status" && cmd.Op != "sagas.recent" && cmd.Op != "sagas.summary" && cmd.Op != "fault.list" && cmd.Op != "config.get" && cmd.Op != "behaviour.get" && cmd.Op != "topics.get" {
+	if !readOps[cmd.Op] {
 		e.log("info", "control", fmt.Sprintf("[%s] %s: %s", d.name, nodeID, cmd.Op))
 	}
 	return first, nil
@@ -1521,26 +1524,26 @@ func (e *Engine) containersBySlug(ctx context.Context) (map[string][]runtime.Con
 
 // syncStore follows what other processes write to the store: deployments
 // they applied or changed are attached, ones they tore down are forgotten.
+// It runs every few seconds, so it compares revisions first and reads only
+// the deployments that changed.
 func (e *Engine) syncStore(ctx context.Context) {
 	e.persistMu.Lock()
-	recs, err := e.store.Deployments()
+	revs, err := e.store.Revisions()
 	if err != nil {
 		e.persistMu.Unlock()
 		return
 	}
-	stored := make(map[string]bool, len(recs))
-	var changed []store.Deployment
+	var changed []string
 	var gone []*deployment
 	e.mu.Lock()
-	for _, rec := range recs {
-		stored[rec.Slug] = true
-		d := e.deps[rec.Name]
-		if d == nil || (d.rev != rec.Rev && !d.applying) {
-			changed = append(changed, rec)
+	for slug, r := range revs {
+		d := e.deps[r.Name]
+		if d == nil || (d.rev != r.Rev && !d.applying) {
+			changed = append(changed, slug)
 		}
 	}
 	for _, d := range e.deps {
-		if !stored[d.slug] && d.rev > 0 && !d.applying {
+		if _, ok := revs[d.slug]; !ok && d.rev > 0 && !d.applying {
 			gone = append(gone, d)
 		}
 	}
@@ -1558,7 +1561,11 @@ func (e *Engine) syncStore(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	for _, rec := range changed {
+	for _, slug := range changed {
+		rec, ok, err := e.store.Deployment(slug)
+		if err != nil || !ok {
+			continue
+		}
 		if d := e.attach(rec, bySlug[rec.Slug]); d != nil {
 			e.log("info", "engine", fmt.Sprintf("[%s] picked up a change another Symphony process made", rec.Name))
 			e.bus.Publish(events.DeploymentSync, events.PhasePayload{Deployment: rec.Name, Phase: rec.Phase})

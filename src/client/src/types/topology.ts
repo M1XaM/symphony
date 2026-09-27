@@ -142,7 +142,6 @@ export interface ContainerRow {
 
 /** Whether container output is being mirrored into the app log. */
 export interface LogStreamState {
-  available: boolean
   enabled: boolean
 }
 

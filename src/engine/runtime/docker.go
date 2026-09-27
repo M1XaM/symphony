@@ -48,12 +48,7 @@ type DockerRuntime struct {
 	prevStats map[string]container.StatsResponse
 }
 
-var (
-	_ Runtime       = (*DockerRuntime)(nil)
-	_ StateListener = (*DockerRuntime)(nil)
-	_ HostLister    = (*DockerRuntime)(nil)
-	_ LogFollower   = (*DockerRuntime)(nil)
-)
+var _ Runtime = (*DockerRuntime)(nil)
 
 // NewDocker returns a runtime for the daemon DOCKER_HOST (or the platform
 // default) points at. It does not connect: the daemon may not be up yet, and

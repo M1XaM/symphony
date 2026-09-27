@@ -68,11 +68,10 @@ export function LogView() {
             onChange={(e) => setFilter(e.target.value)}
             aria-label="filter log lines"
           />
-          <label className="ps-check" title={stream.available ? 'mirror every container’s stdout/stderr into this tab' : 'needs the docker runtime'}>
+          <label className="ps-check" title="mirror every container’s stdout/stderr into this tab">
             <input
               type="checkbox"
               checked={stream.enabled}
-              disabled={!stream.available}
               onChange={(e) => void setLogStream(e.target.checked)}
             />{' '}
             docker logs

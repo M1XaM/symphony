@@ -8,6 +8,7 @@ package logstream
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -38,11 +39,10 @@ var skipAttrs = map[string]bool{"time": true, "level": true, "msg": true, "node"
 type Streamer struct {
 	bus *events.Bus
 
+	rt        runtime.Runtime
 	mu        sync.Mutex
 	enabled   bool
-	follower  runtime.LogFollower // nil when the runtime cannot stream
-	lister    runtime.HostLister  // the cheap "what is running" call
-	following map[string]*tail    // container id -> the goroutine tailing it
+	following map[string]*tail // container id -> the goroutine tailing it
 	// when the mirror (re)started, and when each container's last stream
 	// ended: a stream starts from the latest of those and the container's
 	// creation, so nothing is replayed and nothing printed in between (a
@@ -57,18 +57,8 @@ type Streamer struct {
 type tail struct{ cancel context.CancelFunc }
 
 func New(rt runtime.Runtime, bus *events.Bus) *Streamer {
-	s := &Streamer{bus: bus, enabled: true, following: map[string]*tail{}, ended: map[string]time.Time{}}
-	if f, ok := rt.(runtime.LogFollower); ok {
-		s.follower = f
-	}
-	if l, ok := rt.(runtime.HostLister); ok {
-		s.lister = l
-	}
-	return s
+	return &Streamer{bus: bus, rt: rt, enabled: true, following: map[string]*tail{}, ended: map[string]time.Time{}}
 }
-
-// Available reports whether the runtime can stream container logs at all.
-func (s *Streamer) Available() bool { return s != nil && s.follower != nil && s.lister != nil }
 
 // Enabled reports whether lines are currently being mirrored.
 func (s *Streamer) Enabled() bool {
@@ -77,7 +67,7 @@ func (s *Streamer) Enabled() bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.enabled && s.follower != nil && s.lister != nil
+	return s.enabled
 }
 
 // SetEnabled turns the mirror on or off. Turning it off stops every follower;
@@ -104,7 +94,7 @@ func (s *Streamer) SetEnabled(on bool) {
 	for _, cancel := range stop {
 		cancel()
 	}
-	if changed && s.Available() {
+	if changed {
 		state := "off"
 		if on {
 			state = "on"
@@ -115,10 +105,6 @@ func (s *Streamer) SetEnabled(on bool) {
 
 // Start begins sweeping for containers. It returns immediately.
 func (s *Streamer) Start(ctx context.Context) {
-	if !s.Available() {
-		s.bus.Log("debug", "logs", "runtime cannot stream container logs; the Log tab shows engine events only")
-		return
-	}
 	ctx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
 	s.cancel = cancel
@@ -164,7 +150,7 @@ func (s *Streamer) scan(ctx context.Context) {
 	if !s.Enabled() {
 		return
 	}
-	cs, err := s.lister.ListHost(ctx, false)
+	cs, err := s.rt.ListHost(ctx, false)
 	if err != nil {
 		return
 	}
@@ -226,10 +212,11 @@ func (s *Streamer) scan(ctx context.Context) {
 // before belongs to a previous session of the app, or was mirrored already.
 func (s *Streamer) follow(ctx context.Context, c runtime.HostContainer, since time.Time) {
 	lim := &limiter{tokens: burst, last: time.Now()}
-	err := s.follower.FollowLogs(ctx, c.Name, since, func(line string, stderr bool) {
+	err := s.rt.FollowLogs(ctx, c.Name, since, func(line string, stderr bool) {
 		s.emit(c.Name, line, stderr, lim)
 	})
-	if err != nil && ctx.Err() == nil {
+	// a container removed while followed is the normal end of its stream
+	if err != nil && ctx.Err() == nil && !errors.Is(err, runtime.ErrNotFound) && !strings.Contains(err.Error(), "marked for removal") {
 		s.bus.Log("debug", "logs", fmt.Sprintf("%s: %v", c.Name, err))
 	}
 }

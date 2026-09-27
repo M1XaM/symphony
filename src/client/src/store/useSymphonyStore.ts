@@ -390,7 +390,7 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
   containersRunning: 0,
   containersAll: false,
   containersError: null,
-  logStream: { available: false, enabled: false },
+  logStream: { enabled: false },
   scenarios: [],
   runs: [],
   activeTest: null,

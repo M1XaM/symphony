@@ -1,7 +1,6 @@
 export namespace api {
 	
 	export class LogStreamState {
-	    available: boolean;
 	    enabled: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -10,7 +9,6 @@ export namespace api {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.available = source["available"];
 	        this.enabled = source["enabled"];
 	    }
 	}

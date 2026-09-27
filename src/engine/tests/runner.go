@@ -84,6 +84,15 @@ type Runner struct {
 
 	mu     sync.Mutex
 	active map[string]*activeRun
+	// summaries of stored runs by file, so listing them does not parse
+	// every run's series each time
+	listed map[string]listedRun
+}
+
+type listedRun struct {
+	mod     time.Time
+	size    int64
+	summary RunSummary
 }
 
 type activeRun struct {
@@ -95,11 +104,13 @@ type activeRun struct {
 	unsub  func()
 	prevOK map[string]float64
 	live   map[string]float64
+	// the last state of each node, from the status events
+	nodes map[string]string
 }
 
 // NewRunner stores runs under dir/runs.
 func NewRunner(eng *core.Engine, bus *events.Bus, dir string) *Runner {
-	r := &Runner{eng: eng, bus: bus, dir: dir, active: map[string]*activeRun{}}
+	r := &Runner{eng: eng, bus: bus, dir: dir, active: map[string]*activeRun{}, listed: map[string]listedRun{}}
 	r.catalog, r.catalogE = loadScenarios()
 	return r
 }
@@ -177,7 +188,7 @@ func (r *Runner) Start(ctx context.Context, scenarioID string, template spec.Top
 	run := &Run{ID: id, Scenario: s.ID, Name: s.Name, Template: template.Name, Topology: template, Params: merged,
 		StartedAt: time.Now().UnixMilli(), Series: map[string][]Point{}, Summary: map[string]float64{}}
 	rctx, cancel := context.WithCancel(context.Background())
-	a := &activeRun{run: run, cancel: cancel, live: map[string]float64{}, prevOK: map[string]float64{}}
+	a := &activeRun{run: run, cancel: cancel, live: map[string]float64{}, prevOK: map[string]float64{}, nodes: map[string]string{}}
 	r.mu.Lock()
 	r.active[id] = a
 	r.mu.Unlock()
@@ -545,17 +556,19 @@ func (r *Runner) collect(a *activeRun, s Scenario, ev events.Event) {
 		if p.Deployment != a.run.Template {
 			return
 		}
+		a.mu.Lock()
+		if p.State == "removed" {
+			delete(a.nodes, p.NodeID)
+		} else {
+			a.nodes[p.NodeID] = p.State
+		}
 		healthy := 0.0
-		for _, d := range r.eng.Deployments() {
-			if d.Name != a.run.Template {
-				continue
-			}
-			for _, st := range d.Statuses {
-				if st.State == "healthy" || st.State == "degraded" {
-					healthy++
-				}
+		for _, state := range a.nodes {
+			if state == "healthy" || state == "degraded" {
+				healthy++
 			}
 		}
+		a.mu.Unlock()
 		add("nodes_healthy", healthy)
 	}
 }
@@ -793,27 +806,58 @@ func (r *Runner) ListRuns() ([]RunSummary, error) {
 	}
 	r.mu.Unlock()
 	if r.dir != "" {
-		entries, err := os.ReadDir(r.runsDir())
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+		stored, err := r.storedRuns()
+		if err != nil {
 			return nil, err
 		}
-		for _, e := range entries {
-			if !strings.HasSuffix(e.Name(), ".json") {
-				continue
-			}
-			b, err := os.ReadFile(filepath.Join(r.runsDir(), e.Name()))
-			if err != nil {
-				continue
-			}
-			var run Run
-			if json.Unmarshal(b, &run) != nil {
-				continue
-			}
-			out = append(out, RunSummary{ID: run.ID, Scenario: run.Scenario, Name: run.Name, Template: run.Template, StartedAt: run.StartedAt,
-				EndedAt: run.EndedAt, Passed: run.Passed, Aborted: run.Aborted, Error: run.Error, Summary: run.Summary})
-		}
+		out = append(out, stored...)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt > out[j].StartedAt })
+	return out, nil
+}
+
+// storedRuns summarises every stored run, parsing only the files that are
+// new or changed since the last call.
+func (r *Runner) storedRuns() ([]RunSummary, error) {
+	entries, err := os.ReadDir(r.runsDir())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	seen := make(map[string]bool, len(entries))
+	out := make([]RunSummary, 0, len(entries))
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		seen[e.Name()] = true
+		if l, ok := r.listed[e.Name()]; ok && l.mod.Equal(info.ModTime()) && l.size == info.Size() {
+			out = append(out, l.summary)
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(r.runsDir(), e.Name()))
+		if err != nil {
+			continue
+		}
+		var run Run
+		if json.Unmarshal(b, &run) != nil {
+			continue
+		}
+		sum := RunSummary{ID: run.ID, Scenario: run.Scenario, Name: run.Name, Template: run.Template, StartedAt: run.StartedAt,
+			EndedAt: run.EndedAt, Passed: run.Passed, Aborted: run.Aborted, Error: run.Error, Summary: run.Summary}
+		r.listed[e.Name()] = listedRun{mod: info.ModTime(), size: info.Size(), summary: sum}
+		out = append(out, sum)
+	}
+	for name := range r.listed {
+		if !seen[name] {
+			delete(r.listed, name)
+		}
+	}
 	return out, nil
 }
 

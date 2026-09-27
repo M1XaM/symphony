@@ -317,16 +317,6 @@ func fmtValue(v any) string {
 	return string(b)
 }
 
-func fmtBytes(n uint64) string {
-	switch {
-	case n >= 1<<30:
-		return fmt.Sprintf("%.1f GiB", float64(n)/(1<<30))
-	case n >= 1<<20:
-		return fmt.Sprintf("%.0f MiB", float64(n)/(1<<20))
-	}
-	return fmt.Sprintf("%d KiB", n>>10)
-}
-
 func orDash(s string) string {
 	if s == "" {
 		return "-"

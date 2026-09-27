@@ -15,7 +15,8 @@ import (
 // Labels are a small ordered set of key=value pairs.
 type Labels map[string]string
 
-func (l Labels) key() string {
+// Key is the labels in a canonical order, for use as a map key.
+func (l Labels) Key() string {
 	keys := make([]string, 0, len(l))
 	for k := range l {
 		keys = append(keys, k)
@@ -152,7 +153,7 @@ func NewRegistry() *Registry {
 
 // Counter returns the counter with this name and labels, creating it.
 func (r *Registry) Counter(name string, labels Labels) *Counter {
-	key := "c:" + name + "{" + labels.key() + "}"
+	key := "c:" + name + "{" + labels.Key() + "}"
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if c, ok := r.ctrs[key]; ok {
@@ -166,7 +167,7 @@ func (r *Registry) Counter(name string, labels Labels) *Counter {
 
 // Histogram returns the histogram with this name and labels, creating it.
 func (r *Registry) Histogram(name string, labels Labels) *Histogram {
-	key := "h:" + name + "{" + labels.key() + "}"
+	key := "h:" + name + "{" + labels.Key() + "}"
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if h, ok := r.hists[key]; ok {
@@ -310,7 +311,7 @@ func (w *Window) Rate() (float64, int) {
 
 // Window returns the window with this name and labels, creating it.
 func (r *Registry) Window(name string, labels Labels) *Window {
-	key := "w:" + name + "{" + labels.key() + "}"
+	key := "w:" + name + "{" + labels.Key() + "}"
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.wins == nil {

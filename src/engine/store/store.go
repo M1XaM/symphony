@@ -209,6 +209,36 @@ func (s *Store) Deployments() ([]Deployment, error) {
 	return out, rows.Err()
 }
 
+// Revision is a stored deployment's name and revision, which is all it
+// takes to tell whether it changed.
+type Revision struct {
+	Name string
+	Rev  int64
+}
+
+// Revisions returns every stored deployment's revision by slug, without
+// reading the deployments themselves.
+func (s *Store) Revisions() (map[string]Revision, error) {
+	if s == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`SELECT slug, name, rev FROM deployments`)
+	if err != nil {
+		return nil, fmt.Errorf("store: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]Revision{}
+	for rows.Next() {
+		var slug string
+		var r Revision
+		if err := rows.Scan(&slug, &r.Name, &r.Rev); err != nil {
+			return nil, err
+		}
+		out[slug] = r
+	}
+	return out, rows.Err()
+}
+
 // Deployment returns one stored deployment by slug.
 func (s *Store) Deployment(slug string) (Deployment, bool, error) {
 	if s == nil {

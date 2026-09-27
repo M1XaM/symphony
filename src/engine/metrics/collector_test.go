@@ -3,6 +3,7 @@ package metrics
 import (
 	"testing"
 
+	bmetrics "symphony/blocks/common/metrics"
 	"symphony/engine/blockclient"
 	"symphony/engine/core"
 	"symphony/engine/events"
@@ -53,5 +54,19 @@ func TestPruneForgetsDeadClientsAndDeployments(t *testing.T) {
 	}
 	if _, ok := c.lastLink["live"]; !ok {
 		t.Error("the live deployment's link memory was dropped")
+	}
+}
+
+// Counters are read as the increase since the previous scrape, and a block
+// that restarted counts from zero again rather than going negative.
+func TestIncreaseSurvivesARestart(t *testing.T) {
+	ctr := bmetrics.CounterSnapshot{Name: "saga_total", Labels: bmetrics.Labels{"outcome": "ok"}, Value: 10}
+	prev := scrape{counters: map[string]int64{counterKey(ctr): 4}}
+	if got := prev.increase(ctr); got != 6 {
+		t.Fatalf("increase = %v, want 6", got)
+	}
+	ctr.Value = 3
+	if got := prev.increase(ctr); got != 3 {
+		t.Fatalf("after a restart increase = %v, want 3", got)
 	}
 }
