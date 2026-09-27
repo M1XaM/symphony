@@ -24,6 +24,7 @@ const (
 	TestProgress   Type = "test:progress"   // TestProgressPayload, while a scenario runs
 	TestDone       Type = "test:done"       // TestDonePayload
 	RuntimeStatus  Type = "runtime:status"  // RuntimeStatusPayload, whenever the Docker daemon comes or goes
+	DeploymentSync Type = "deployment:sync" // PhasePayload, another process changed a deployment's stored state
 )
 
 // Event is the envelope delivered to subscribers.

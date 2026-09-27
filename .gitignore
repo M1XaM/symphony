@@ -4,4 +4,5 @@ src/client/dist/*
 !src/client/dist/.gitkeep
 src/client/node_modules/
 *.log
+symphony.db
 .DS_Store

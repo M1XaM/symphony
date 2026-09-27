@@ -25,14 +25,14 @@ import (
 
 // API holds the engine and forwards bus events to the webview.
 type API struct {
-	eng    *core.Engine
-	bus    *events.Bus
-	lib    *library.Library
-	host   *hoststats.Sampler
-	tests  *tests.Runner
-	logs   *logstream.Streamer
-	ctx    context.Context
-	unsub  func()
+	eng   *core.Engine
+	bus   *events.Bus
+	lib   *library.Library
+	host  *hoststats.Sampler
+	tests *tests.Runner
+	logs  *logstream.Streamer
+	ctx   context.Context
+	unsub func()
 
 	mu     sync.Mutex
 	docker events.RuntimeStatusPayload

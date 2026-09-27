@@ -29,7 +29,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	if err := app.Run(app.Options{Assets: os.DirFS(abs), Blocks: os.DirFS(src)}); err != nil {
+	// `go run` builds into a temporary directory, so the state database
+	// cannot live next to the binary: keep it in src/ instead.
+	db := os.Getenv("SYMPHONY_DB")
+	if db == "" {
+		db = filepath.Join(src, "symphony.db")
+	}
+	if err := app.Run(app.Options{Assets: os.DirFS(abs), Blocks: os.DirFS(src), DBPath: db}); err != nil {
 		log.Fatal(err)
 	}
 }

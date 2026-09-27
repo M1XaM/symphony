@@ -20,6 +20,7 @@ import (
 	"symphony/engine/images"
 	"symphony/engine/runtime"
 	"symphony/engine/spec"
+	"symphony/engine/store"
 )
 
 func TestIntegrationOrchestration(t *testing.T) {
@@ -53,8 +54,12 @@ func TestIntegrationOrchestration(t *testing.T) {
 			}
 		}
 	})
-	dir := t.TempDir()
-	eng := core.New(core.Options{Runtime: rt, Bus: bus, Images: images.NewEnsurer(os.DirFS(src)), Store: core.NewStore(dir)})
+	db, err := store.Open(filepath.Join(t.TempDir(), store.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	eng := core.New(core.Options{Runtime: rt, Bus: bus, Images: images.NewEnsurer(os.DirFS(src)), Store: db})
 	eng.Start(ctx)
 	defer eng.Stop()
 
@@ -151,5 +156,93 @@ func TestIntegrationOrchestration(t *testing.T) {
 	}
 	if left, _ := rt.List(ctx); len(left) != 0 {
 		t.Fatalf("containers left after teardown: %v", left)
+	}
+}
+
+// A closed Symphony comes back to what the store says: running containers
+// are attached as they are, and a deployment whose containers are gone is
+// recreated with the load its gateway was driving.
+func TestIntegrationReopen(t *testing.T) {
+	ctx := context.Background()
+	rt, err := runtime.NewDocker("symphony-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	if _, err := rt.Ping(ctx); err != nil {
+		t.Skip(err)
+	}
+	rt.GC(ctx)
+	defer rt.GC(ctx)
+
+	src, _ := filepath.Abs("../..")
+	st, err := store.Open(filepath.Join(t.TempDir(), store.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	session := func() *core.Engine {
+		return core.New(core.Options{Runtime: rt, Bus: events.NewBus(), Images: images.NewEnsurer(os.DirFS(src)), Store: st})
+	}
+
+	topo := spec.Presets()[1] // Choreography (saga)
+	topo.Name = "IT reopen"
+	actx, cancel := context.WithTimeout(ctx, 6*time.Minute)
+	defer cancel()
+	first := session()
+	if err := first.Apply(actx, topo); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if _, err := first.Control(ctx, topo.Name, "gateway", control.Command{Op: "load.set", Params: map[string]any{"rps": 5.0}}); err != nil {
+		t.Fatalf("load.set: %v", err)
+	}
+
+	// the app closes and opens again with everything still running
+	second := session()
+	broken, err := second.Attach(ctx)
+	if err != nil || len(broken) != 0 {
+		t.Fatalf("attach with everything running: broken %v, %v", broken, err)
+	}
+	if deps := second.Deployments(); len(deps) != 1 || deps[0].Phase != core.PhaseRunning {
+		t.Fatalf("attached %+v", deps)
+	}
+
+	// Docker loses the containers while the app is closed
+	list, _ := rt.List(ctx)
+	for _, c := range list {
+		if err := rt.Destroy(ctx, c.Name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	third := session()
+	broken, err = third.Attach(ctx)
+	if err != nil || len(broken) != 1 || broken[0] != topo.Name {
+		t.Fatalf("attach without containers: broken %v, %v", broken, err)
+	}
+	if err := third.Reopen(actx, topo.Name); err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	deps := third.Deployments()
+	if len(deps) != 1 || deps[0].Phase != core.PhaseRunning {
+		t.Fatalf("after reopen: %+v", deps)
+	}
+	for id, s := range deps[0].Statuses {
+		if s.State != "healthy" {
+			t.Errorf("node %s is %s after reopen", id, s.State)
+		}
+	}
+	res, err := third.Control(ctx, topo.Name, "gateway", control.Command{Op: "load.status"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if running, _ := res.State.(map[string]any)["running"].(bool); !running {
+		t.Fatalf("the load was not restarted: %v", res.State)
+	}
+
+	if err := third.Teardown(ctx, topo.Name); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+	if left, _ := st.Deployments(); len(left) != 0 {
+		t.Fatalf("still stored after teardown: %+v", left)
 	}
 }

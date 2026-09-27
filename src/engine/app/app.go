@@ -26,6 +26,7 @@ import (
 	"symphony/engine/logstream"
 	"symphony/engine/metrics"
 	"symphony/engine/runtime"
+	"symphony/engine/store"
 	"symphony/engine/tests"
 )
 
@@ -64,6 +65,8 @@ type Options struct {
 	// (SYMPHONY_TEARDOWN_ON_EXIT=1); by default containers keep running and
 	// are adopted by the next session.
 	TeardownOnExit bool
+	// DBPath is the state database; "" puts symphony.db next to the binary.
+	DBPath string
 }
 
 // Run constructs bus -> runtime -> engine -> collectors -> api and blocks
@@ -81,12 +84,12 @@ func Run(opts Options) error {
 	if dir, err := os.UserConfigDir(); err == nil {
 		configDir = filepath.Join(dir, "symphony")
 	} else {
-		bus.Log("warn", "app", err.Error()+" — templates, deployments and test runs will not persist")
+		bus.Log("warn", "app", err.Error()+" — templates and test runs will not persist")
 	}
-	store := core.NewStore(configDir)
-	owner, err := store.InstanceID()
+	st := openStore(bus, opts.DBPath, configDir)
+	owner, err := st.InstanceID()
 	if err != nil {
-		bus.Log("warn", "app", "instance id: "+err.Error())
+		bus.Log("warn", "store", "instance id: "+err.Error())
 		owner = "symphony"
 	}
 
@@ -94,7 +97,7 @@ func Run(opts Options) error {
 	if err != nil {
 		return err
 	}
-	eng := core.New(core.Options{Runtime: docker, Bus: bus, Images: images.NewEnsurer(opts.Blocks), Store: store})
+	eng := core.New(core.Options{Runtime: docker, Bus: bus, Images: images.NewEnsurer(opts.Blocks), Store: st, FollowStore: true})
 	col := metrics.NewCollector(bus, 500*time.Millisecond, eng)
 	host := hoststats.New(bus, time.Second)
 	runner := tests.NewRunner(eng, bus, configDir)
@@ -130,7 +133,7 @@ func Run(opts Options) error {
 			dockerChanged := func(up bool, detail string) {
 				if up {
 					bus.Log("info", "runtime", "docker daemon connected ("+detail+")")
-					eng.Adopt(ctx)
+					eng.Restore(ctx)
 				} else {
 					bus.Log("warn", "runtime", detail)
 				}
@@ -159,7 +162,43 @@ func Run(opts Options) error {
 			eng.Stop()
 			api.Shutdown(bound)
 			_ = docker.Close()
+			_ = st.Close()
 		},
 		Bind: []interface{}{bound},
 	})
+}
+
+// openStore opens the state database next to the binary, or where path
+// says. When that directory is not writable (a binary installed under
+// /usr/bin, say) it falls back to the user config directory; with neither,
+// nothing persists and the app still runs.
+func openStore(bus *events.Bus, path, configDir string) *store.Store {
+	if path == "" {
+		p, err := store.DefaultPath()
+		if err != nil {
+			bus.Log("warn", "store", err.Error())
+		}
+		path = p
+	}
+	var st *store.Store
+	var err error
+	if path != "" {
+		st, err = store.Open(path)
+	}
+	if st == nil && configDir != "" {
+		fallback := filepath.Join(configDir, store.FileName)
+		bus.Log("warn", "store", fmt.Sprintf("%v — using %s instead", err, fallback))
+		st, err = store.Open(fallback)
+	}
+	if st == nil {
+		bus.Log("error", "store", fmt.Sprintf("%v — deployments will not be remembered", err))
+		return nil
+	}
+	bus.Log("info", "store", "state in "+st.Path())
+	if n, err := st.ImportLegacy(configDir); err != nil {
+		bus.Log("warn", "store", "importing the old deployment records: "+err.Error())
+	} else if n > 0 {
+		bus.Log("info", "store", fmt.Sprintf("imported %d deployment(s) from %s", n, configDir))
+	}
+	return st
 }

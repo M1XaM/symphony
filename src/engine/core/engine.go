@@ -4,7 +4,9 @@
 // deployment with its own network, containers, statuses and faults, keyed by
 // the topology's name. The engine also owns the hot-config, fault-injection
 // and control entry points used by the UI, talking to the blocks' admin
-// ports through blockclient.
+// ports through blockclient. Every deployment's state is written to the
+// store as it changes, so a later Symphony (or the CLI next to it) can pick
+// the deployments up again.
 package core
 
 import (
@@ -25,6 +27,7 @@ import (
 	"symphony/engine/planner"
 	"symphony/engine/runtime"
 	"symphony/engine/spec"
+	"symphony/engine/store"
 )
 
 // Phase is a deployment's coarse state, shown in the toolbar pill.
@@ -96,6 +99,10 @@ type deployment struct {
 	states map[string]runtime.Container
 	// last stats sample per container, for rates
 	stats map[string]statSample
+	// open-ended load.set params per node, restarted when reopened
+	load map[string]map[string]any
+	// the store revision this engine last wrote or read; 0 = not stored
+	rev int64
 }
 
 type activeFault struct {
@@ -120,7 +127,11 @@ type Options struct {
 	Runtime runtime.Runtime
 	Bus     *events.Bus
 	Images  *images.Ensurer
-	Store   *Store
+	// Store keeps the deployments across runs; nil keeps nothing.
+	Store *store.Store
+	// FollowStore makes the engine pick up deployments another process
+	// (the CLI) applies, changes or tears down through the same store.
+	FollowStore bool
 }
 
 // Engine is safe for concurrent use; Wails invokes bound methods from
@@ -129,7 +140,13 @@ type Engine struct {
 	rt     runtime.Runtime
 	bus    *events.Bus
 	images *images.Ensurer
-	store  *Store
+	store  *store.Store
+	follow bool
+
+	// persistMu orders store writes with the revision bookkeeping, so the
+	// store follower never mistakes this engine's own write for someone
+	// else's.
+	persistMu sync.Mutex
 
 	mu         sync.Mutex
 	deps       map[string]*deployment
@@ -145,15 +162,13 @@ func New(opts Options) *Engine {
 		bus:        opts.Bus,
 		images:     opts.Images,
 		store:      opts.Store,
+		follow:     opts.FollowStore,
 		deps:       map[string]*deployment{},
 		containers: map[string]containerRef{},
 		clients:    map[string]*blockclient.Client{},
 	}
 	if e.images == nil {
 		e.images = images.NewEnsurer(nil)
-	}
-	if e.store == nil {
-		e.store = NewStore("")
 	}
 	if l, ok := e.rt.(runtime.StateListener); ok {
 		l.OnStateChange(e.onContainerState)
@@ -315,6 +330,9 @@ func (e *Engine) Apply(ctx context.Context, desired spec.Topology) error {
 	defer e.end(d)
 
 	e.setPhase(d, PhaseValidating, "")
+	// stored before anything is created: the containers are never without
+	// a record, and an apply cut short is resumed from the desired state
+	e.persist(d, desired)
 	for _, f := range findings {
 		e.log("warn", "validate", fmt.Sprintf("[%s] %s", d.name, f.Error()))
 	}
@@ -336,9 +354,7 @@ func (e *Engine) Apply(ctx context.Context, desired spec.Topology) error {
 	d.current = desired
 	d.network = plan.Network
 	e.mu.Unlock()
-	if err := e.store.save(d.slug, record{Name: d.name, Token: d.token, Network: d.network, Topology: desired}); err != nil {
-		e.log("warn", "engine", fmt.Sprintf("[%s] could not remember deployment on disk: %v", d.name, err))
-	}
+	e.persist(d, desired)
 	e.log("info", "engine", fmt.Sprintf("[%s] apply complete in %s", d.name, time.Since(start).Round(time.Millisecond)))
 	if len(desired.Nodes) == 0 {
 		e.remove(d)
@@ -694,11 +710,11 @@ func (e *Engine) SetHotConfig(ctx context.Context, depName, nodeID string, patch
 		return err
 	}
 	e.progress(d, op, 0, 1, "done", "", 0)
-	_ = e.store.save(d.slug, record{Name: d.name, Token: d.token, Network: d.network, Topology: e.currentLocked(d)})
+	e.persist(d, e.currentOf(d))
 	return nil
 }
 
-func (e *Engine) currentLocked(d *deployment) spec.Topology {
+func (e *Engine) currentOf(d *deployment) spec.Topology {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return d.current.Clone()
@@ -730,7 +746,7 @@ func (e *Engine) SetResources(ctx context.Context, depName, nodeID string, r spe
 		}
 	}
 	e.log("info", "runtime", fmt.Sprintf("[%s] %s: resources cpus=%g memory_mb=%d", d.name, nodeID, r.CPUs, r.MemoryMB))
-	_ = e.store.save(d.slug, record{Name: d.name, Token: d.token, Network: d.network, Topology: e.currentLocked(d)})
+	e.persist(d, e.currentOf(d))
 	return nil
 }
 
@@ -755,6 +771,18 @@ func (e *Engine) Control(ctx context.Context, depName, nodeID string, cmd contro
 		if i == 0 {
 			first = res
 		}
+	}
+	switch cmd.Op {
+	case "load.set":
+		// only a load without an end is state worth restoring; a timed one
+		// replaces it and then stops by itself
+		if cmd.DurationMs > 0 || positive(cmd.Params["duration_ms"]) {
+			e.setLoad(d, nodeID, nil)
+		} else {
+			e.setLoad(d, nodeID, cmd.Params)
+		}
+	case "load.stop":
+		e.setLoad(d, nodeID, nil)
 	}
 	if cmd.Op != "load.status" && cmd.Op != "sagas.recent" && cmd.Op != "sagas.summary" && cmd.Op != "fault.list" && cmd.Op != "config.get" && cmd.Op != "behaviour.get" && cmd.Op != "topics.get" {
 		e.log("info", "control", fmt.Sprintf("[%s] %s: %s", d.name, nodeID, cmd.Op))
@@ -1140,14 +1168,18 @@ func statusPayload(dep string, st NodeStatus) events.NodeStatusPayload {
 }
 
 // pollLoop refreshes deep health and container stats every second.
+// With FollowStore it also looks at the store every third second.
 func (e *Engine) pollLoop(ctx context.Context) {
 	tk := time.NewTicker(pollInterval)
 	defer tk.Stop()
-	for {
+	for n := 1; ; n++ {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tk.C:
+			if e.follow && n%3 == 0 {
+				e.syncStore(ctx)
+			}
 			e.pollOnce(ctx)
 		}
 	}
@@ -1227,65 +1259,369 @@ func (e *Engine) pollOnce(ctx context.Context) {
 
 func round1(x float64) float64 { return float64(int(x*10)) / 10 }
 
-// --- adoption ----------------------------------------------------------------
+// --- stored deployments -----------------------------------------------------
 
-// Adopt rebuilds deployments from containers the runtime still has from a
-// previous run of Symphony (same owner id). Containers of deployments no
-// record exists for are removed. Deployments the engine already tracks are
-// left alone, so it can run again whenever the daemon comes back.
-func (e *Engine) Adopt(ctx context.Context) {
-	list, err := e.rt.List(ctx)
+// Restore picks up every deployment the store holds, the way the app does on
+// start and whenever the Docker daemon comes back: running ones are attached
+// as they are, ones whose containers are gone or stopped are recreated in
+// the background (see Reopen), and containers of this installation that no
+// deployment owns any more are removed.
+func (e *Engine) Restore(ctx context.Context) {
+	broken, err := e.Attach(ctx)
 	if err != nil {
-		e.log("warn", "engine", "could not list existing containers: "+err.Error())
+		e.log("warn", "engine", "could not read the stored deployments: "+err.Error())
 		return
 	}
-	bySlug := map[string][]runtime.Container{}
-	for _, c := range list {
-		if slug := c.Labels[runtime.LabelDeployment]; slug != "" {
-			bySlug[slug] = append(bySlug[slug], c)
+	e.CollectOrphans(ctx)
+	for _, name := range broken {
+		go func(name string) {
+			if err := e.Reopen(ctx, name); err != nil {
+				e.log("error", "engine", fmt.Sprintf("[%s] reopen failed: %v", name, err))
+			}
+		}(name)
+	}
+}
+
+// Attach makes every stored deployment live in this engine from its record
+// and the containers the runtime still has of it, creating and removing
+// nothing. It returns the ones that need Reopen: an apply or a teardown was
+// cut short, or a container a running deployment needs is gone or stopped.
+func (e *Engine) Attach(ctx context.Context) ([]string, error) {
+	recs, err := e.store.Deployments()
+	if err != nil || len(recs) == 0 {
+		return nil, err
+	}
+	bySlug, err := e.containersBySlug(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var broken []string
+	for _, rec := range recs {
+		cs := bySlug[rec.Slug]
+		known := e.tracks(rec.Slug)
+		if e.attach(rec, cs) == nil {
+			continue // busy here: this engine knows better than the record
 		}
+		switch Phase(rec.Phase) {
+		case PhaseApplying, PhaseValidating, PhasePlanning, PhaseTearingDown:
+			broken = append(broken, rec.Name)
+		case PhaseRunning:
+			if !intact(rec, cs) {
+				broken = append(broken, rec.Name)
+			}
+		}
+		if !known {
+			e.unpause(ctx, rec.Name, cs)
+		}
+	}
+	return broken, nil
+}
+
+// CollectOrphans removes the containers (and networks) of this installation
+// that belong to no stored deployment. Records are written before an apply
+// creates anything, so a container without one is left over from a crash.
+func (e *Engine) CollectOrphans(ctx context.Context) {
+	bySlug, err := e.containersBySlug(ctx)
+	if err != nil {
+		return
 	}
 	for slug, cs := range bySlug {
-		if e.tracks(slug) {
+		if _, ok, err := e.store.Deployment(slug); err != nil || ok || e.tracks(slug) {
 			continue
 		}
-		rec, err := e.store.load(slug)
-		if err != nil {
-			e.log("warn", "engine", fmt.Sprintf("removing %d orphaned container(s) of %q (no deployment record)", len(cs), slug))
-			for _, c := range cs {
-				_ = e.rt.Destroy(ctx, c.Name)
-			}
-			_ = e.rt.RemoveNetwork(ctx, "symphony-"+slug)
-			continue
+		e.log("warn", "engine", fmt.Sprintf("removing %d orphaned container(s) of %q (no stored deployment)", len(cs), slug))
+		for _, c := range cs {
+			_ = e.rt.Destroy(ctx, c.Name)
 		}
-		d := &deployment{
-			name: rec.Name, slug: slug, network: rec.Network, token: rec.Token, phase: PhaseRunning,
-			current: rec.Topology, statuses: map[string]*NodeStatus{}, faults: map[string][]activeFault{},
-			states: map[string]runtime.Container{}, stats: map[string]statSample{},
+		_ = e.rt.RemoveNetwork(ctx, "symphony-"+slug)
+	}
+}
+
+// Reopen brings a stored deployment back to what its record describes: an
+// interrupted teardown is finished, anything else is recreated from the
+// stored topology, and the load its nodes were driving is started again.
+func (e *Engine) Reopen(ctx context.Context, name string) error {
+	d := e.lookup(name)
+	if d == nil {
+		return fmt.Errorf("%w: %s", ErrNotDeployed, name)
+	}
+	e.mu.Lock()
+	phase, topo, load := d.phase, d.current.Clone(), cloneLoad(d.load)
+	e.mu.Unlock()
+	if phase == PhaseTearingDown {
+		e.log("info", "engine", fmt.Sprintf("[%s] finishing the teardown a previous session started", name))
+		return e.Teardown(ctx, name)
+	}
+	e.log("info", "engine", fmt.Sprintf("[%s] reopening: recreating its containers from the stored state", name))
+	if err := e.clear(ctx, d); err != nil {
+		return err
+	}
+	if err := e.Apply(ctx, topo); err != nil {
+		return err
+	}
+	for node, params := range load {
+		if _, err := e.Control(ctx, name, node, control.Command{Op: "load.set", Params: params}); err != nil {
+			e.log("warn", "engine", fmt.Sprintf("[%s] %s: could not restart the load: %v", name, node, err))
 		}
-		if d.network == "" {
-			d.network = planner.NetworkName(rec.Topology)
+	}
+	return nil
+}
+
+// clear destroys every container of a deployment and leaves it empty, so
+// the next Apply creates everything afresh.
+func (e *Engine) clear(ctx context.Context, d *deployment) error {
+	if _, err := e.begin(d.name, false); err != nil {
+		return err
+	}
+	defer e.end(d)
+	e.mu.Lock()
+	var names []string
+	for name, ref := range e.containers {
+		if ref.dep == d.name {
+			names = append(names, name)
+		}
+	}
+	e.mu.Unlock()
+	for _, name := range names {
+		if err := e.rt.Destroy(ctx, name); err != nil && !errors.Is(err, runtime.ErrNotFound) {
+			return err
 		}
 		e.mu.Lock()
+		delete(e.containers, name)
+		delete(e.clients, name)
+		e.mu.Unlock()
+	}
+	e.mu.Lock()
+	d.current = spec.Topology{Version: d.current.Version, Name: d.name}.Normalized()
+	d.statuses = map[string]*NodeStatus{}
+	d.faults = map[string][]activeFault{}
+	d.states = map[string]runtime.Container{}
+	d.stats = map[string]statSample{}
+	e.mu.Unlock()
+	return nil
+}
+
+// attach builds (or refreshes in place) the in-memory deployment of a
+// record. It returns nil, touching nothing, while this engine is applying
+// or tearing that deployment down itself.
+func (e *Engine) attach(rec store.Deployment, cs []runtime.Container) *deployment {
+	e.mu.Lock()
+	d := e.deps[rec.Name]
+	if d != nil && d.applying {
+		e.mu.Unlock()
+		return nil
+	}
+	if d == nil {
+		d = &deployment{name: rec.Name, faults: map[string][]activeFault{}, stats: map[string]statSample{}}
 		e.deps[rec.Name] = d
-		for _, c := range cs {
-			node := c.Labels[runtime.LabelNode]
-			e.containers[c.Name] = containerRef{dep: rec.Name, node: node}
-			d.states[c.Name] = c
-			if c.AdminAddr != "" {
-				e.clients[c.Name] = blockclient.New(c.AdminAddr, rec.Token)
+	}
+	d.slug, d.token, d.network, d.rev = rec.Slug, rec.Token, rec.Network, rec.Rev
+	d.phase = Phase(rec.Phase)
+	d.current = rec.Topology
+	d.load = rec.Load
+	if d.network == "" {
+		d.network = planner.NetworkName(rec.Topology)
+	}
+	for name, ref := range e.containers {
+		if ref.dep == d.name {
+			delete(e.containers, name)
+			delete(e.clients, name)
+		}
+	}
+	d.states = map[string]runtime.Container{}
+	for _, c := range cs {
+		e.containers[c.Name] = containerRef{dep: d.name, node: c.Labels[runtime.LabelNode]}
+		d.states[c.Name] = c
+		if c.AdminAddr != "" {
+			e.clients[c.Name] = blockclient.New(c.AdminAddr, d.token)
+		}
+	}
+	var removed []string
+	for id := range d.statuses {
+		if _, ok := rec.Topology.NodeByID(id); !ok {
+			removed = append(removed, id)
+		}
+	}
+	d.statuses = map[string]*NodeStatus{}
+	for _, n := range rec.Topology.Nodes {
+		d.statuses[n.ID] = &NodeStatus{NodeID: n.ID, State: string(runtime.StatePending), Replicas: n.Replicas, UpdatedAt: time.Now().UnixMilli()}
+	}
+	e.mu.Unlock()
+
+	for _, id := range removed {
+		e.bus.Publish(events.NodeStatus, events.NodeStatusPayload{Deployment: d.name, NodeID: id, State: "removed", UpdatedAt: time.Now().UnixMilli()})
+	}
+	for _, n := range rec.Topology.Nodes {
+		e.recomputeStatus(d, n.ID)
+	}
+	e.bus.Publish(events.EnginePhase, events.PhasePayload{Deployment: d.name, Phase: string(d.phase)})
+	return d
+}
+
+// intact reports whether every replica a stored deployment describes has a
+// container whose process is up.
+func intact(rec store.Deployment, cs []runtime.Container) bool {
+	up := make(map[string]bool, len(cs))
+	for _, c := range cs {
+		up[c.Name] = c.Running
+	}
+	for _, n := range rec.Topology.Nodes {
+		for _, name := range planner.ContainerNames(rec.Slug, n) {
+			if !up[name] {
+				return false
 			}
 		}
-		for _, n := range rec.Topology.Nodes {
-			d.statuses[n.ID] = &NodeStatus{NodeID: n.ID, State: string(runtime.StatePending), Replicas: n.Replicas, UpdatedAt: time.Now().UnixMilli()}
-		}
-		e.mu.Unlock()
-		for _, n := range rec.Topology.Nodes {
-			e.recomputeStatus(d, n.ID)
-		}
-		e.log("info", "engine", fmt.Sprintf("[%s] adopted %d running container(s) from a previous session", rec.Name, len(cs)))
-		e.bus.Publish(events.EnginePhase, events.PhasePayload{Deployment: d.name, Phase: string(PhaseRunning)})
 	}
+	return true
+}
+
+// unpause resumes containers a pause fault left paused: faults end with the
+// session that injected them.
+func (e *Engine) unpause(ctx context.Context, name string, cs []runtime.Container) {
+	for _, c := range cs {
+		if c.State == runtime.StatePaused {
+			if err := e.rt.Unpause(ctx, c.Name); err == nil {
+				e.log("info", "engine", fmt.Sprintf("[%s] resumed %s, left paused by a previous session", name, c.Name))
+			}
+		}
+	}
+}
+
+// containersBySlug lists this installation's containers per deployment.
+func (e *Engine) containersBySlug(ctx context.Context) (map[string][]runtime.Container, error) {
+	list, err := e.rt.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list containers: %w", err)
+	}
+	out := map[string][]runtime.Container{}
+	for _, c := range list {
+		if slug := c.Labels[runtime.LabelDeployment]; slug != "" {
+			out[slug] = append(out[slug], c)
+		}
+	}
+	return out, nil
+}
+
+// syncStore follows what other processes write to the store: deployments
+// they applied or changed are attached, ones they tore down are forgotten.
+func (e *Engine) syncStore(ctx context.Context) {
+	e.persistMu.Lock()
+	recs, err := e.store.Deployments()
+	if err != nil {
+		e.persistMu.Unlock()
+		return
+	}
+	stored := make(map[string]bool, len(recs))
+	var changed []store.Deployment
+	var gone []*deployment
+	e.mu.Lock()
+	for _, rec := range recs {
+		stored[rec.Slug] = true
+		d := e.deps[rec.Name]
+		if d == nil || (d.rev != rec.Rev && !d.applying) {
+			changed = append(changed, rec)
+		}
+	}
+	for _, d := range e.deps {
+		if !stored[d.slug] && d.rev > 0 && !d.applying {
+			gone = append(gone, d)
+		}
+	}
+	e.mu.Unlock()
+	e.persistMu.Unlock()
+
+	for _, d := range gone {
+		e.log("info", "engine", fmt.Sprintf("[%s] torn down by another Symphony process", d.name))
+		e.forget(d)
+	}
+	if len(changed) == 0 {
+		return
+	}
+	bySlug, err := e.containersBySlug(ctx)
+	if err != nil {
+		return
+	}
+	for _, rec := range changed {
+		if d := e.attach(rec, bySlug[rec.Slug]); d != nil {
+			e.log("info", "engine", fmt.Sprintf("[%s] picked up a change another Symphony process made", rec.Name))
+			e.bus.Publish(events.DeploymentSync, events.PhasePayload{Deployment: rec.Name, Phase: rec.Phase})
+		}
+	}
+}
+
+// persist writes a deployment to the store with the given topology: the one
+// being applied while an apply runs, the running one otherwise.
+func (e *Engine) persist(d *deployment, topo spec.Topology) {
+	e.persistMu.Lock()
+	defer e.persistMu.Unlock()
+	e.mu.Lock()
+	rec := store.Deployment{Name: d.name, Slug: d.slug, Token: d.token, Network: d.network, Phase: string(d.phase), Topology: topo, Load: cloneLoad(d.load)}
+	e.mu.Unlock()
+	if rec.Network == "" {
+		rec.Network = planner.NetworkName(topo)
+	}
+	rev, err := e.store.Save(rec)
+	e.stored(d, rev, err)
+}
+
+func (e *Engine) persistPhase(d *deployment, p Phase) {
+	e.persistMu.Lock()
+	defer e.persistMu.Unlock()
+	rev, err := e.store.SetPhase(d.slug, string(p))
+	e.stored(d, rev, err)
+}
+
+// setLoad remembers the load a node drives (nil: none).
+func (e *Engine) setLoad(d *deployment, nodeID string, params map[string]any) {
+	e.persistMu.Lock()
+	defer e.persistMu.Unlock()
+	e.mu.Lock()
+	if params == nil {
+		delete(d.load, nodeID)
+	} else {
+		if d.load == nil {
+			d.load = map[string]map[string]any{}
+		}
+		d.load[nodeID] = params
+	}
+	load := cloneLoad(d.load)
+	e.mu.Unlock()
+	rev, err := e.store.SetLoad(d.slug, load)
+	e.stored(d, rev, err)
+}
+
+// stored records the revision a write produced. Callers hold persistMu.
+func (e *Engine) stored(d *deployment, rev int64, err error) {
+	if err != nil {
+		e.log("warn", "store", fmt.Sprintf("[%s] %v", d.name, err))
+		return
+	}
+	if rev > 0 {
+		e.mu.Lock()
+		d.rev = rev
+		e.mu.Unlock()
+	}
+}
+
+func cloneLoad(in map[string]map[string]any) map[string]map[string]any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]map[string]any, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func positive(v any) bool {
+	f, ok := v.(float64)
+	if !ok {
+		if i, isInt := v.(int); isInt {
+			f, ok = float64(i), true
+		}
+	}
+	return ok && f > 0
 }
 
 // --- helpers ------------------------------------------------------------------
@@ -1354,7 +1690,7 @@ func (e *Engine) begin(name string, create bool) (*deployment, error) {
 		d = &deployment{
 			name:     name,
 			slug:     spec.Slug(name),
-			token:    NewToken(),
+			token:    store.RandomID(16),
 			phase:    PhaseIdle,
 			current:  spec.Topology{Version: spec.CurrentVersion, Name: name}.Normalized(),
 			statuses: map[string]*NodeStatus{},
@@ -1377,8 +1713,19 @@ func (e *Engine) end(d *deployment) {
 	e.mu.Unlock()
 }
 
-// remove forgets a deployment that has nothing running any more.
+// remove forgets a deployment that has nothing running any more, here and
+// in the store.
 func (e *Engine) remove(d *deployment) {
+	e.persistMu.Lock()
+	if err := e.store.Delete(d.slug); err != nil {
+		e.log("warn", "store", fmt.Sprintf("[%s] %v", d.name, err))
+	}
+	e.persistMu.Unlock()
+	e.forget(d)
+}
+
+// forget drops a deployment from memory only.
+func (e *Engine) forget(d *deployment) {
 	e.mu.Lock()
 	if e.deps[d.name] == d {
 		delete(e.deps, d.name)
@@ -1390,7 +1737,6 @@ func (e *Engine) remove(d *deployment) {
 		}
 	}
 	e.mu.Unlock()
-	e.store.remove(d.slug)
 	e.bus.Publish(events.EnginePhase, events.PhasePayload{Deployment: d.name, Phase: string(PhaseGone)})
 }
 
@@ -1398,6 +1744,7 @@ func (e *Engine) setPhase(d *deployment, p Phase, msg string) {
 	e.mu.Lock()
 	d.phase = p
 	e.mu.Unlock()
+	e.persistPhase(d, p)
 	e.bus.Publish(events.EnginePhase, events.PhasePayload{Deployment: d.name, Phase: string(p), Message: msg})
 }
 

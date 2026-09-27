@@ -148,7 +148,9 @@ export interface SymphonyState {
   compareRuns: Run[]
 
   init(): Promise<void>
-  refreshDeployments(): Promise<void>
+  /** Re-read what the engine runs; `changed` names a deployment whose
+   *  topology another process changed, which the map then shows as it is. */
+  refreshDeployments(changed?: string): Promise<void>
   loadTemplate(name: string): void
   setName(name: string): void
   addNode(kind: NodeKind, position: Position): void
@@ -254,7 +256,7 @@ function patchDeployment(
 }
 
 function freshDeployment(d: DeploymentInfo): Deployment {
-  return { name: d.name, phase: d.phase, statuses: d.statuses, links: {}, busy: false, containers: {} }
+  return { ...newDeployment(d.name, d.phase), statuses: d.statuses }
 }
 
 function dropDeployment(deployments: Record<string, Deployment>, name: string): Record<string, Deployment> {
@@ -424,6 +426,7 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
       // the engine has just adopted whatever the daemon still runs
       if (r.available && !was) void get().refreshDeployments()
     })
+    onEvent<PhaseEvent>('deployment:sync', (p) => void get().refreshDeployments(p.deployment))
     onEvent<ProgressEvent>('apply:progress', (p) => {
       queue((s) => (p.deployment === s.topology.name ? { opStatus: { ...s.opStatus, [p.op_id]: p.status } } : {}))
       get().appendLog(progressLine(p))
@@ -565,7 +568,7 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
     }
   },
 
-  async refreshDeployments() {
+  async refreshDeployments(changed) {
     try {
       const running = await backend.getDeployments()
       set((s) => {
@@ -574,7 +577,8 @@ export const useSymphonyStore = create<SymphonyState>()((set, get) => ({
           const prev = s.deployments[d.name]
           deployments[d.name] = prev ? { ...prev, phase: d.phase, statuses: d.statuses } : freshDeployment(d)
         }
-        return { deployments }
+        const shown = changed === s.topology.name ? running.find((d) => d.name === changed) : undefined
+        return shown ? { deployments, topology: shown.topology, plan: null, opStatus: {} } : { deployments }
       })
     } catch (err) {
       warn('engine', err)

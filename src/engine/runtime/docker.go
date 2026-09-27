@@ -406,6 +406,7 @@ func fromInspect(c container.InspectResponse) Container {
 			out.Health = string(c.State.Health.Status)
 		}
 		out.State = mapState(c.State, out.Health)
+		out.Running = c.State.Running || c.State.Paused || c.State.Restarting
 	}
 	if c.NetworkSettings != nil {
 		for port, bindings := range c.NetworkSettings.Ports {
@@ -667,6 +668,7 @@ func fromSummary(s container.Summary) Container {
 		c.Health = string(s.Health.Status)
 	}
 	c.State = mapSummaryState(s.State, c.Health)
+	c.Running = s.State == container.StateRunning || s.State == container.StatePaused || s.State == container.StateRestarting
 	c.AdminAddr = adminAddr(s.Ports)
 	return c
 }

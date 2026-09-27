@@ -56,10 +56,13 @@ type ContainerSpec struct {
 
 // Container is the runtime's view of one container.
 type Container struct {
-	ID        string
-	Name      string
-	Image     string
-	State     State
+	ID    string
+	Name  string
+	Image string
+	State State
+	// Running is true while the process is up (running, paused or
+	// restarting), whatever its health says.
+	Running   bool
 	Health    string // none | starting | healthy | unhealthy (engine-level health check)
 	ExitCode  int
 	OOMKilled bool
