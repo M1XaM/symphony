@@ -109,6 +109,9 @@ type Runtime interface {
 	RemoveNetwork(ctx context.Context, name string) error
 
 	ImageExists(ctx context.Context, ref string) (bool, error)
+	// ImageLabels returns the labels of a local image; ok is false when
+	// there is no such image.
+	ImageLabels(ctx context.Context, ref string) (labels map[string]string, ok bool, err error)
 	PullImage(ctx context.Context, ref string, progress func(string)) error
 	// BuildImage builds ref from a tar build context with the given
 	// Dockerfile path (inside the context) and build args.

@@ -171,6 +171,20 @@ func (d *DockerRuntime) ImageExists(ctx context.Context, ref string) (bool, erro
 	return false, fmt.Errorf("image inspect %s: %w", ref, err)
 }
 
+func (d *DockerRuntime) ImageLabels(ctx context.Context, ref string) (map[string]string, bool, error) {
+	res, err := d.cli.ImageInspect(ctx, ref)
+	if err != nil {
+		if cerrdefs.IsNotFound(err) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("image inspect %s: %w", ref, err)
+	}
+	if res.Config == nil {
+		return map[string]string{}, true, nil
+	}
+	return res.Config.Labels, true, nil
+}
+
 func (d *DockerRuntime) PullImage(ctx context.Context, ref string, progress func(string)) error {
 	resp, err := d.cli.ImagePull(ctx, ref, client.ImagePullOptions{})
 	if err != nil {
@@ -413,32 +427,17 @@ func fromInspect(c container.InspectResponse) Container {
 	return out
 }
 
-// mapState folds Docker's status and health into the runtime State.
+// mapState folds Docker's status and health into the runtime State. Unlike
+// the list endpoint's row it knows how a container ended, which tells a
+// clean stop from a crash.
 func mapState(s *container.State, health string) State {
 	switch s.Status {
-	case container.StateCreated:
-		return StatePending
-	case container.StatePaused:
-		return StatePaused
-	case container.StateRunning:
-		switch health {
-		case "healthy":
-			return StateHealthy
-		case "unhealthy":
-			return StateFailed
-		case "starting":
-			return StateStarting
-		}
-		return StateHealthy // no healthcheck configured
-	case container.StateRestarting:
-		return StateStarting
 	case container.StateExited, container.StateDead, container.StateRemoving:
-		if s.ExitCode == 0 && !s.OOMKilled {
-			return StateStopped
+		if s.ExitCode != 0 || s.OOMKilled {
+			return StateFailed
 		}
-		return StateFailed
 	}
-	return StateStopped
+	return mapSummaryState(s.Status, health)
 }
 
 func (d *DockerRuntime) Stats(ctx context.Context, name string) (Stats, error) {

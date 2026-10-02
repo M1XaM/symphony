@@ -27,11 +27,11 @@ func ContainerName(slug, nodeID string, replica, total int) string {
 
 // ContainerNames lists every replica's container name.
 func ContainerNames(slug string, n spec.Node) []string {
-	out := make([]string, 0, n.Replicas)
-	for r := 1; r <= n.Replicas; r++ {
-		out = append(out, ContainerName(slug, n.ID, r, n.Replicas))
+	names := spec.ReplicaNames(n)
+	for i := range names {
+		names[i] = slug + "-" + names[i]
 	}
-	return out
+	return names
 }
 
 // LinkSet is what goes into a node's SYMPHONY_LINKS: every edge touching

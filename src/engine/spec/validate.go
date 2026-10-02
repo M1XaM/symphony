@@ -39,6 +39,39 @@ func HasErrors(errs []ValidationError) bool {
 	return false
 }
 
+// idRule is what ValidID accepts, as the validation message says it.
+const idRule = "use letters, digits, '-', '_' and '.', starting with a letter or digit, at most 63 characters"
+
+// ValidID reports whether an id can be part of a container name, a DNS
+// alias and a URL path, which is where node and edge ids end up.
+func ValidID(id string) bool {
+	if id == "" || len(id) > 63 {
+		return false
+	}
+	for i, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case (r == '-' || r == '_' || r == '.') && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// ReplicaNames lists the names of a node's containers within its
+// deployment: the node id, or "<id>-<n>" for each of several replicas.
+func ReplicaNames(n Node) []string {
+	if n.Replicas <= 1 {
+		return []string{n.ID}
+	}
+	out := make([]string, 0, n.Replicas)
+	for r := 1; r <= n.Replicas; r++ {
+		out = append(out, fmt.Sprintf("%s-%d", n.ID, r))
+	}
+	return out
+}
+
 // Validate checks structural integrity of the topology. It never mutates the
 // receiver and returns all findings rather than stopping at the first.
 func (t Topology) Validate() []ValidationError {
@@ -72,6 +105,9 @@ func (t Topology) Validate() []ValidationError {
 			continue
 		}
 		byID[n.ID] = n
+		if !ValidID(n.ID) {
+			add(p+".id", n.ID, "", fmt.Sprintf("node id %q: %s", n.ID, idRule))
+		}
 		if !n.Kind.Valid() {
 			add(p+".kind", n.ID, "", fmt.Sprintf("unknown node kind %q", n.Kind))
 		}
@@ -107,6 +143,37 @@ func (t Topology) Validate() []ValidationError {
 		}
 	}
 
+	// Sinks report a saga's outcome to the deployment's gateway, and there
+	// is one address for that: the first gateway's.
+	var gateways []string
+	for _, n := range t.Nodes {
+		if n.Kind == KindInfra && n.ID != "" {
+			gateways = append(gateways, n.ID)
+		}
+	}
+	if len(gateways) > 1 {
+		warn("nodes", gateways[1], "", fmt.Sprintf("more than one gateway: sagas that end asynchronously (through a broker) report their outcome to %q only, so the ones %q starts will time out",
+			gateways[0], gateways[1]))
+	}
+
+	// A replica's container is named "<node>-<n>", which must not be what
+	// another node (or one of its replicas) is called.
+	owner := map[string]string{}
+	named := map[string]bool{}
+	for i, n := range t.Nodes {
+		if n.ID == "" || named[n.ID] {
+			continue // reported above
+		}
+		named[n.ID] = true
+		for _, name := range ReplicaNames(n) {
+			if other, taken := owner[name]; taken && other != n.ID {
+				add(fmt.Sprintf("nodes[%d].id", i), n.ID, "", fmt.Sprintf("container name %q is also used by node %q; rename one of them", name, other))
+				continue
+			}
+			owner[name] = n.ID
+		}
+	}
+
 	edgeIDs := map[string]bool{}
 	for i, e := range t.Edges {
 		p := fmt.Sprintf("edges[%d]", i)
@@ -114,6 +181,8 @@ func (t Topology) Validate() []ValidationError {
 			add(p+".id", "", "", "edge id is required")
 		} else if edgeIDs[e.ID] {
 			add(p+".id", "", e.ID, fmt.Sprintf("duplicate edge id %q", e.ID))
+		} else if !ValidID(e.ID) {
+			add(p+".id", "", e.ID, fmt.Sprintf("edge id %q: %s", e.ID, idRule))
 		}
 		edgeIDs[e.ID] = true
 

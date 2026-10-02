@@ -35,6 +35,11 @@ func Level(errorRate float64) events.LinkLevel {
 	return events.LinkOK
 }
 
+// LatencyWindow is how far back the latency percentiles look: long enough
+// to hold a few dozen sagas at a modest rate, short enough that a fault
+// shows while it lasts and is gone from the numbers soon after it ends.
+const LatencyWindow = 3 * time.Second
+
 // Collector emits events.MetricsTick and events.LinkHealth on a fixed interval.
 type Collector struct {
 	bus      *events.Bus
@@ -185,7 +190,7 @@ func (c *Collector) scrapeDeployment(ctx context.Context, snap core.DeploymentSn
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 16)
-	var sagaOK, sagaFail float64
+	var sagaOK, sagaFail, sagaSecs float64
 	var sagaLat, sagaP99 float64
 	var lag float64
 	sagaSeen := false
@@ -200,7 +205,7 @@ func (c *Collector) scrapeDeployment(ctx context.Context, snap core.DeploymentSn
 				defer func() { <-sem }()
 				cctx, cancel := context.WithTimeout(ctx, 400*time.Millisecond)
 				defer cancel()
-				doc, err := cl.Metrics(cctx)
+				doc, err := cl.Metrics(cctx, LatencyWindow)
 				if err != nil {
 					return
 				}
@@ -245,6 +250,7 @@ func (c *Collector) scrapeDeployment(ctx context.Context, snap core.DeploymentSn
 						}
 					case "saga_total":
 						sagaSeen = true
+						sagaSecs = math.Max(sagaSecs, secs)
 						v := prev.increase(ctr)
 						if ctr.Labels["outcome"] == "ok" {
 							sagaOK += v
@@ -311,9 +317,10 @@ func (c *Collector) scrapeDeployment(ctx context.Context, snap core.DeploymentSn
 		remembered[e.ID] = entry
 	}
 
-	secs := c.interval.Seconds()
 	if sagaSeen {
-		p.SagasPerSec = round1((sagaOK + sagaFail) / secs)
+		// over the time that really passed between the two scrapes, which
+		// is not exactly the interval when a block answers slowly
+		p.SagasPerSec = round1((sagaOK + sagaFail) / math.Max(sagaSecs, 0.001))
 		p.SagasOK = int64(sagaOK)
 		p.SagasFailed = int64(sagaFail)
 		if sagaOK+sagaFail > 0 {

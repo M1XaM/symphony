@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"symphony/blocks/common/control"
@@ -36,6 +37,9 @@ var shared = &http.Client{Transport: &http.Transport{
 func New(addr, token string) *Client {
 	return &Client{Base: "http://" + addr, Token: token, http: shared}
 }
+
+// Addr is the host:port the client talks to.
+func (c *Client) Addr() string { return strings.TrimPrefix(c.Base, "http://") }
 
 // LogLine mirrors blocks/common/server.LogLine.
 type LogLine struct {
@@ -102,10 +106,15 @@ func (c *Client) Control(ctx context.Context, cmd control.Command) (control.Resu
 	return r, nil
 }
 
-// Metrics fetches the counters and histograms.
-func (c *Client) Metrics(ctx context.Context) (metrics.Document, error) {
+// Metrics fetches the counters and histograms, with the histograms'
+// percentiles taken over the last window (0: the block's default).
+func (c *Client) Metrics(ctx context.Context, window time.Duration) (metrics.Document, error) {
 	var d metrics.Document
-	err := c.do(ctx, http.MethodGet, "/metrics", nil, &d, 800*time.Millisecond)
+	path := "/metrics"
+	if window > 0 {
+		path += fmt.Sprintf("?window_ms=%d", window.Milliseconds())
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, &d, 800*time.Millisecond)
 	return d, err
 }
 

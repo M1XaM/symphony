@@ -1,9 +1,10 @@
 // Package store keeps Symphony's state in one SQLite file next to the
 // binary: the instance id that labels everything it creates, and the current
 // state of every deployment (the topology, its admin token and network, its
-// phase and the load the gateway was told to drive). A Symphony that was
-// closed reads it back on start and reopens what was running; the GUI and
-// the CLI next to it share the file.
+// phase, its faults and the load the gateway was told to drive), and the
+// results of the test runs. A Symphony that was closed reads it back on
+// start and reopens what was running; the GUI and the CLI next to it share
+// the file.
 package store
 
 import (
@@ -26,7 +27,7 @@ import (
 // FileName is the database's name next to the binary.
 const FileName = "symphony.db"
 
-const schemaVersion = 1
+const schemaVersion = 3
 
 const schema = `
 CREATE TABLE IF NOT EXISTS meta (
@@ -44,7 +45,18 @@ CREATE TABLE IF NOT EXISTS deployments (
 	rev        INTEGER NOT NULL,
 	created_at INTEGER NOT NULL,
 	updated_at INTEGER NOT NULL
-);`
+);
+CREATE TABLE IF NOT EXISTS faults (
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	slug       TEXT NOT NULL,    -- the deployment
+	node       TEXT NOT NULL,
+	kind       TEXT NOT NULL,
+	block_id   TEXT NOT NULL,    -- the block's own fault id, '' for a runtime fault
+	params     TEXT NOT NULL,    -- JSON
+	until      INTEGER NOT NULL, -- unix ms it ends by itself, 0 = until cleared
+	created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS faults_slug ON faults (slug);`
 
 // Deployment is the stored state of one applied topology.
 type Deployment struct {
@@ -99,7 +111,7 @@ func Open(path string) (*Store, error) {
 	// writes a handful of rows per user action.
 	db.SetMaxOpenConns(1)
 	// busy_timeout lets the GUI and the CLI write the same file in turn.
-	for _, q := range []string{"PRAGMA busy_timeout = 5000", "PRAGMA synchronous = FULL", schema,
+	for _, q := range []string{"PRAGMA busy_timeout = 5000", "PRAGMA synchronous = FULL", schema, runsSchema,
 		fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)} {
 		if _, err := db.Exec(q); err != nil {
 			db.Close()
@@ -310,13 +322,137 @@ func (s *Store) update(slug, set string, value any) (int64, error) {
 	return rev, nil
 }
 
-// Delete forgets a deployment.
+// Delete forgets a deployment and its faults.
 func (s *Store) Delete(slug string) error {
 	if s == nil {
 		return nil
 	}
+	if _, err := s.db.Exec(`DELETE FROM faults WHERE slug = ?`, slug); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`DELETE FROM deployments WHERE slug = ?`, slug)
 	return err
+}
+
+// --- faults ----------------------------------------------------------------
+
+// Fault is a fault that was injected into a deployment and has not been
+// cleared. It is stored so that whichever Symphony process is around when
+// it is due can undo it, not only the one that injected it.
+type Fault struct {
+	ID      int64 // assigned by AddFault
+	Node    string
+	Kind    string
+	BlockID string // the block's own fault id; "" for a runtime (Docker) fault
+	Params  map[string]any
+	Until   time.Time // zero: until cleared
+}
+
+// touch bumps a deployment's revision inside tx, so that other processes
+// notice its faults changed; 0 when the deployment is not stored.
+func touch(tx *sql.Tx, slug string) (int64, error) {
+	var rev int64
+	err := tx.QueryRow(`UPDATE deployments SET rev = rev + 1, updated_at = ? WHERE slug = ? RETURNING rev`,
+		time.Now().UnixMilli(), slug).Scan(&rev)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	return rev, err
+}
+
+// faultTx runs fn and bumps the deployment's revision in one transaction.
+func (s *Store) faultTx(slug string, fn func(tx *sql.Tx) error) (int64, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, fmt.Errorf("store: %w", err)
+	}
+	defer tx.Rollback()
+	if err := fn(tx); err != nil {
+		return 0, fmt.Errorf("store: faults of %s: %w", slug, err)
+	}
+	rev, err := touch(tx, slug)
+	if err != nil {
+		return 0, fmt.Errorf("store: faults of %s: %w", slug, err)
+	}
+	return rev, tx.Commit()
+}
+
+// AddFault records a fault and returns its id and the deployment's new
+// revision.
+func (s *Store) AddFault(slug string, f Fault) (id, rev int64, err error) {
+	if s == nil {
+		return 0, 0, nil
+	}
+	params, err := json.Marshal(f.Params)
+	if err != nil {
+		return 0, 0, err
+	}
+	var until int64
+	if !f.Until.IsZero() {
+		until = f.Until.UnixMilli()
+	}
+	rev, err = s.faultTx(slug, func(tx *sql.Tx) error {
+		res, err := tx.Exec(`INSERT INTO faults (slug, node, kind, block_id, params, until, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			slug, f.Node, f.Kind, f.BlockID, string(params), until, time.Now().UnixMilli())
+		if err != nil {
+			return err
+		}
+		id, err = res.LastInsertId()
+		return err
+	})
+	return id, rev, err
+}
+
+// RemoveFault forgets one fault and returns the deployment's new revision.
+func (s *Store) RemoveFault(slug string, id int64) (int64, error) {
+	if s == nil || id == 0 {
+		return 0, nil
+	}
+	return s.faultTx(slug, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM faults WHERE slug = ? AND id = ?`, slug, id)
+		return err
+	})
+}
+
+// ClearFaults forgets every fault of a node, or of the whole deployment
+// when node is "".
+func (s *Store) ClearFaults(slug, node string) (int64, error) {
+	if s == nil {
+		return 0, nil
+	}
+	return s.faultTx(slug, func(tx *sql.Tx) error {
+		_, err := tx.Exec(`DELETE FROM faults WHERE slug = ? AND (node = ? OR ? = '')`, slug, node, node)
+		return err
+	})
+}
+
+// Faults returns a deployment's faults, oldest first.
+func (s *Store) Faults(slug string) ([]Fault, error) {
+	if s == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`SELECT id, node, kind, block_id, params, until FROM faults WHERE slug = ? ORDER BY id`, slug)
+	if err != nil {
+		return nil, fmt.Errorf("store: %w", err)
+	}
+	defer rows.Close()
+	var out []Fault
+	for rows.Next() {
+		var f Fault
+		var params string
+		var until int64
+		if err := rows.Scan(&f.ID, &f.Node, &f.Kind, &f.BlockID, &params, &until); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(params), &f.Params); err != nil {
+			return nil, fmt.Errorf("store: fault %d: %w", f.ID, err)
+		}
+		if until > 0 {
+			f.Until = time.UnixMilli(until)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
 }
 
 func loadJSON(load map[string]map[string]any) (any, error) {

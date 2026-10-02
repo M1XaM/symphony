@@ -7,6 +7,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
@@ -15,12 +17,22 @@ import (
 	"sync"
 	"time"
 
+	"symphony/blocks/common/wire"
 	"symphony/engine/runtime"
 	"symphony/engine/spec"
 )
 
 // Dockerfile is the path of the blocks Dockerfile inside the build context.
 const Dockerfile = "blocks/Dockerfile"
+
+// ContractLabel is the image label that says which blocks contract the
+// image was built for.
+const ContractLabel = "symphony.contract"
+
+// SourceLabel is the image label that carries the digest of the sources an
+// image was built from by the app itself. An image built by hand (`make
+// blocks`) has none, and is taken as it is.
+const SourceLabel = "symphony.source"
 
 // BlockFor maps a symphony/<block>:tag image to its block name.
 func BlockFor(image string) (string, bool) {
@@ -90,6 +102,26 @@ type Ensurer struct {
 	Source fs.FS // embedded src tree; nil disables building
 	mu     sync.Mutex
 	locks  map[string]*sync.Mutex
+
+	digestOnce sync.Once
+	digest     string
+}
+
+// sourceDigest identifies the block sources this Symphony carries: a hash
+// of the build context, "" when it cannot be read.
+func (e *Ensurer) sourceDigest() string {
+	e.digestOnce.Do(func() {
+		bc, err := BuildContext(e.Source)
+		if err != nil {
+			return
+		}
+		h := sha256.New()
+		if _, err := io.Copy(h, bc); err != nil {
+			return
+		}
+		e.digest = hex.EncodeToString(h.Sum(nil))[:16]
+	})
+	return e.digest
 }
 
 func NewEnsurer(src fs.FS) *Ensurer {
@@ -108,37 +140,57 @@ func (e *Ensurer) lock(ref string) *sync.Mutex {
 }
 
 // Ensure makes ref available in the runtime: present already, built from
-// the embedded blocks source for symphony/* images, pulled otherwise.
+// the embedded blocks source for symphony/* images (again when the one that
+// is there was built for another contract version, or by the app from
+// sources other than the ones it carries now), pulled otherwise.
 func (e *Ensurer) Ensure(ctx context.Context, rt runtime.Runtime, ref string, progress func(string)) error {
 	m := e.lock(ref)
 	m.Lock()
 	defer m.Unlock()
-	ok, err := rt.ImageExists(ctx, ref)
+	block, isBlock := BlockFor(ref)
+	if !isBlock {
+		ok, err := rt.ImageExists(ctx, ref)
+		if err != nil || ok {
+			return err
+		}
+		progress("pulling " + ref)
+		if err := rt.PullImage(ctx, ref, progress); err != nil {
+			return fmt.Errorf("pull %s: %w", ref, err)
+		}
+		return nil
+	}
+	labels, ok, err := rt.ImageLabels(ctx, ref)
 	if err != nil {
 		return err
 	}
-	if ok {
-		return nil
-	}
-	if block, isBlock := BlockFor(ref); isBlock {
-		if e.Source == nil {
-			return fmt.Errorf("image %s is missing and this build has no embedded block sources; run `make blocks`", ref)
+	if e.Source == nil {
+		if ok {
+			return nil // nothing to rebuild it from: taken as it is
 		}
+		return fmt.Errorf("image %s is missing and this build has no embedded block sources; run `make blocks`", ref)
+	}
+	digest := e.sourceDigest()
+	have, from := labels[ContractLabel], labels[SourceLabel]
+	switch {
+	case !ok:
 		progress("building " + ref + " from the embedded blocks source")
-		bc, err := BuildContext(e.Source)
-		if err != nil {
-			return err
-		}
-		start := time.Now()
-		if err := rt.BuildImage(ctx, ref, bc, Dockerfile, map[string]string{"BLOCK": block}, progress); err != nil {
-			return fmt.Errorf("build %s: %w", ref, err)
-		}
-		progress(fmt.Sprintf("built %s in %s", ref, time.Since(start).Round(time.Second)))
+	case have != wire.Contract:
+		// the engine would ask it for operations it does not have
+		progress(fmt.Sprintf("rebuilding %s: it speaks contract %q, this Symphony %s", ref, have, wire.Contract))
+	case from != "" && digest != "" && from != digest:
+		// an earlier version of the app built it, from other sources
+		progress(fmt.Sprintf("rebuilding %s: the block sources changed since it was built", ref))
+	default:
 		return nil
 	}
-	progress("pulling " + ref)
-	if err := rt.PullImage(ctx, ref, progress); err != nil {
-		return fmt.Errorf("pull %s: %w", ref, err)
+	bc, err := BuildContext(e.Source)
+	if err != nil {
+		return err
 	}
+	start := time.Now()
+	if err := rt.BuildImage(ctx, ref, bc, Dockerfile, map[string]string{"BLOCK": block, "CONTRACT": wire.Contract, "SOURCE": digest}, progress); err != nil {
+		return fmt.Errorf("build %s: %w", ref, err)
+	}
+	progress(fmt.Sprintf("built %s in %s", ref, time.Since(start).Round(time.Second)))
 	return nil
 }

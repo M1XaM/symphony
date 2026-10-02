@@ -105,7 +105,10 @@ func (s *Sampler) sample(ctx context.Context) events.HostStatsPayload {
 	cur := s.snapshotNet(ctx)
 	if prev != nil && cur != nil {
 		secs := cur.at.Sub(prev.at).Seconds()
-		if secs > 0 {
+		// The counters are summed over the interfaces there are, and a
+		// teardown removes some (the deployment's bridge, its containers'
+		// veths): the sum then drops, which is not traffic.
+		if secs > 0 && cur.rx >= prev.rx && cur.tx >= prev.tx {
 			p.NetRxBps = math.Round(float64(cur.rx-prev.rx) / secs)
 			p.NetTxBps = math.Round(float64(cur.tx-prev.tx) / secs)
 		}

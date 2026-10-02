@@ -3,7 +3,9 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"symphony/engine/spec"
 )
@@ -117,5 +119,121 @@ func TestImportLegacy(t *testing.T) {
 	}
 	if n, _ := s.ImportLegacy(cfg); n != 0 {
 		t.Fatalf("second import brought %d more", n)
+	}
+}
+
+func TestFaults(t *testing.T) {
+	s := open(t)
+	topo := spec.Presets()[0]
+	d := Deployment{Name: topo.Name, Slug: spec.Slug(topo.Name), Token: "tok", Network: "net", Phase: "running", Topology: topo}
+	if _, err := s.Save(d); err != nil {
+		t.Fatal(err)
+	}
+	until := time.Now().Add(time.Minute).Truncate(time.Millisecond)
+	id1, rev, err := s.AddFault(d.Slug, Fault{Node: "payment", Kind: "pause", Until: until})
+	if err != nil || id1 == 0 || rev != 2 {
+		t.Fatalf("AddFault: id %d rev %d, %v", id1, rev, err)
+	}
+	id2, _, _ := s.AddFault(d.Slug, Fault{Node: "payment", Kind: "latency", BlockID: "f-1", Params: map[string]any{"ms": 250.0}})
+	if _, _, err := s.AddFault(d.Slug, Fault{Node: "inventory", Kind: "kill"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Faults(d.Slug)
+	if err != nil || len(got) != 3 {
+		t.Fatalf("Faults: %v, %v", got, err)
+	}
+	if !got[0].Until.Equal(until) || !got[1].Until.IsZero() || got[1].BlockID != "f-1" || got[1].Params["ms"] != 250.0 {
+		t.Fatalf("read back %+v", got)
+	}
+	if rev, _ := s.RemoveFault(d.Slug, id2); rev != 5 {
+		t.Fatalf("RemoveFault rev %d, want 5", rev)
+	}
+	if _, err := s.ClearFaults(d.Slug, "payment"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = s.Faults(d.Slug); len(got) != 1 || got[0].Node != "inventory" {
+		t.Fatalf("after clearing payment: %+v", got)
+	}
+	if err := s.Delete(d.Slug); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = s.Faults(d.Slug); len(got) != 0 {
+		t.Fatalf("faults outlived their deployment: %+v", got)
+	}
+	var none *Store
+	if id, rev, err := none.AddFault("x", Fault{}); id != 0 || rev != 0 || err != nil {
+		t.Fatalf("nil store: %d %d %v", id, rev, err)
+	}
+}
+
+func TestRuns(t *testing.T) {
+	s := open(t)
+	old := Run{ID: "t01-a-1", Scenario: "t01", Name: "Baseline", Template: "A", StartedAt: 1000, EndedAt: 2000, Passed: true,
+		Summary: map[string]float64{"availability": 1}, Body: []byte(`{"id":"t01-a-1","series":{}}`)}
+	newer := Run{ID: "t04-b-2", Scenario: "t04", Name: "Crash", Template: "B", StartedAt: 5000, EndedAt: 6000, Aborted: true, Error: "boom", Body: []byte(`{"id":"t04-b-2"}`)}
+	for _, r := range []Run{old, newer} {
+		if err := s.SaveRun(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := s.Runs()
+	if err != nil || len(list) != 2 || list[0].ID != newer.ID || list[1].ID != old.ID {
+		t.Fatalf("Runs: %+v, %v", list, err)
+	}
+	if !list[1].Passed || list[1].Summary["availability"] != 1 || !list[0].Aborted || list[0].Error != "boom" || list[0].Body != nil {
+		t.Fatalf("listed %+v", list)
+	}
+	body, ok, err := s.RunBody(old.ID)
+	if err != nil || !ok || string(body) != string(old.Body) {
+		t.Fatalf("RunBody: %s %v %v", body, ok, err)
+	}
+	old.Passed = false
+	if err := s.SaveRun(old); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ = s.Runs(); len(list) != 2 || list[1].Passed {
+		t.Fatalf("saving again must replace: %+v", list)
+	}
+	if ok, err := s.DeleteRun(old.ID); !ok || err != nil {
+		t.Fatalf("DeleteRun: %v %v", ok, err)
+	}
+	if ok, _ := s.DeleteRun(old.ID); ok {
+		t.Fatal("deleted a run twice")
+	}
+	if _, ok, _ := s.RunBody(old.ID); ok {
+		t.Fatal("the run is still there")
+	}
+	var none *Store
+	if err := none.SaveRun(old); err == nil {
+		t.Fatal("a nil store must say it keeps nothing")
+	}
+	if list, err := none.Runs(); list != nil || err != nil {
+		t.Fatalf("nil store: %v %v", list, err)
+	}
+}
+
+// Runs an older version kept as files are taken over once.
+func TestImportRuns(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "t01-x-1.json"),
+		[]byte(`{"id":"t01-x-1","scenario":"t01","name":"Baseline","template":"X","started_at":1000,"ended_at":2000,"passed":true,"summary":{"availability":0.99},"series":{"error_rate":[{"t":0,"v":0}]}}`), 0o644)
+	os.WriteFile(filepath.Join(dir, "broken.json"), []byte(`{`), 0o644)
+	s := open(t)
+	n, err := s.ImportRuns(dir)
+	if err != nil || n != 1 {
+		t.Fatalf("imported %d, %v", n, err)
+	}
+	list, _ := s.Runs()
+	if len(list) != 1 || list[0].ID != "t01-x-1" || !list[0].Passed || list[0].Summary["availability"] != 0.99 {
+		t.Fatalf("imported %+v", list)
+	}
+	if body, _, _ := s.RunBody("t01-x-1"); !strings.Contains(string(body), `"series"`) {
+		t.Fatalf("the body lost its series: %s", body)
+	}
+	if n, _ := s.ImportRuns(dir); n != 0 {
+		t.Fatalf("second import brought %d more", n)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "t01-x-1.json")); err != nil {
+		t.Fatal("the files must stay where they are")
 	}
 }
