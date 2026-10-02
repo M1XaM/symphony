@@ -53,6 +53,34 @@ type Run struct {
 	Summary    map[string]float64 `json:"summary"`
 	Assertions []AssertionResult  `json:"assertions"`
 	Notes      []string           `json:"notes"`
+	// Running: the run is still going; what is here is what it has so far.
+	// Never stored.
+	Running bool `json:"running,omitempty"`
+}
+
+// complete gives a run every list and map it may lack: one that is still
+// going has no assertions yet and perhaps no phase or note, and a reader
+// that walks them (the window does) must find them empty, not missing.
+func (run Run) complete() Run {
+	if run.Phases == nil {
+		run.Phases = []PhaseSpan{}
+	}
+	if run.Series == nil {
+		run.Series = map[string][]Point{}
+	}
+	if run.Summary == nil {
+		run.Summary = map[string]float64{}
+	}
+	if run.Assertions == nil {
+		run.Assertions = []AssertionResult{}
+	}
+	if run.Notes == nil {
+		run.Notes = []string{}
+	}
+	if run.Params == nil {
+		run.Params = map[string]any{}
+	}
+	return run
 }
 
 // RunSummary is what the list shows.

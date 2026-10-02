@@ -89,6 +89,16 @@ resource limits and config changes against the template on the map. Each run
 collects the same series the map shows, evaluates assertions per phase and is
 stored, so runs of one scenario on the two templates can be compared.
 
+A finished run can be exported as a report: the three dots at the end of its
+row offer **Export MD** and **Export PDF**, and a save dialog follows. The
+report holds everything the run recorded: the verdict and the assertions,
+the scenario and its parameters, the template's components and how they
+connect, the numbers per phase, the timeline of what the runner did, and the
+data. The PDF adds a picture of the template and a chart of every series
+(phases shaded, faults marked); the Markdown is text, lists and tables. From a
+terminal: `symphony-cli test … --report-md FILE --report-pdf FILE`, or
+`symphony-cli run <id> --report-pdf FILE` for a run that is already stored.
+
 ## Command line
 
 `symphony-cli` is the same app without the window: the same engine and API,

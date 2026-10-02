@@ -12,6 +12,7 @@ export const createTestsSlice: Slice<TestsSlice> = (set, get) => ({
   openRun: null,
   compareIds: [],
   compareRuns: [],
+  exportingRun: null,
 
   async refreshRuns() {
     if (!hasBackend()) return
@@ -67,6 +68,21 @@ export const createTestsSlice: Slice<TestsSlice> = (set, get) => ({
       await get().refreshRuns()
     } catch (err) {
       warn(get, 'tests', err)
+    }
+  },
+
+  async exportRun(id, format) {
+    if (!hasBackend() || get().exportingRun) return
+    set({ exportingRun: id })
+    try {
+      const res = await backend.exportRunReport(id, format)
+      if (!res.cancelled) {
+        get().appendLog({ ts: Date.now(), level: 'info', source: 'test', message: `report of ${id} saved to ${res.path}` })
+      }
+    } catch (err) {
+      get().appendLog({ ts: Date.now(), level: 'error', source: 'test', message: `report of ${id}: ${errorMessage(err)}` })
+    } finally {
+      set({ exportingRun: null })
     }
   },
 

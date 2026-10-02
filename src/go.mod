@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/containerd/errdefs v1.0.0
+	github.com/go-pdf/fpdf v0.9.0
 	github.com/moby/moby/api v1.56.0
 	github.com/moby/moby/client v0.6.0
 	github.com/shirou/gopsutil/v4 v4.26.8

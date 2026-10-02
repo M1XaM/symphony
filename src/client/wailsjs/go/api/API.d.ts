@@ -24,6 +24,8 @@ export function DeleteRun(arg1:string):Promise<void>;
 
 export function DeleteUserTemplate(arg1:string):Promise<Array<spec.Topology>>;
 
+export function ExportRunReport(arg1:string,arg2:string):Promise<api.ExportResult>;
+
 export function GetDeployments():Promise<Array<core.DeploymentInfo>>;
 
 export function GetHostStats():Promise<Array<events.HostStatsPayload>>;

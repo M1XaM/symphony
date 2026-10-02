@@ -133,21 +133,31 @@ func init() {
 		{name: "scenarios", group: "Tests", run: cmdScenarios,
 			help:     "the predefined test scenarios, with their parameters",
 			examples: []string{`symphony-cli scenarios`}},
-		{name: "test", args: "<scenario> <template|file> [--name NAME] [param=value...]", group: "Tests", docker: needDocker, run: cmdTest, changes: true,
+		{name: "test", args: "<scenario> <template|file> [--name NAME] [--report-md FILE] [--report-pdf FILE] [param=value...]", group: "Tests", docker: needDocker, run: cmdTest, changes: true,
 			blocks: "until the run ends (a scenario's duration_s, a minute by default); Ctrl-C aborts it",
 			help: "run a scenario against a template and wait for the verdict\n" +
 				"The template is applied first when it is not running. Exits 3 when the run does\n" +
 				"not pass. The deployment is returned to the template afterwards and keeps running.",
-			flags: []flagDoc{{"--name", "NAME", "run it on the deployment of this name"}},
+			flags: []flagDoc{
+				{"--name", "NAME", "run it on the deployment of this name"},
+				{"--report-md", "FILE", "write the run's report there as Markdown: verdict, topology, numbers per phase, timeline, data"},
+				{"--report-pdf", "FILE", "write the report there as PDF, with a picture of the topology and a chart of every series"}},
 			examples: []string{
 				`symphony-cli test t04-crash "Choreography (saga)"`,
+				`symphony-cli test t04-crash "Choreography (saga)" --report-md crash.md --report-pdf crash.pdf`,
 				`symphony-cli --json test t01-baseline "Orchestration (saga)" rps=80 duration_s=30`}},
 		{name: "runs", group: "Tests", run: cmdRuns,
 			help:     "stored test runs, newest first",
 			examples: []string{`symphony-cli runs`}},
-		{name: "run", args: "<id>", group: "Tests", run: cmdRun,
-			help:     "one run's phases, summary and assertions (with --json: its series too)",
-			examples: []string{`symphony-cli run t04-crash-choreography-saga-1790000000`}},
+		{name: "run", args: "<id> [--report-md FILE] [--report-pdf FILE]", group: "Tests", run: cmdRun,
+			help: "one run's phases, summary and assertions (with --json: its series too)\n" +
+				"With --report-md or --report-pdf it writes the stored run's report instead.",
+			flags: []flagDoc{
+				{"--report-md", "FILE", "write the run's report there as Markdown"},
+				{"--report-pdf", "FILE", "write the run's report there as PDF"}},
+			examples: []string{
+				`symphony-cli run t04-crash-choreography-saga-1790000000`,
+				`symphony-cli run t04-crash-choreography-saga-1790000000 --report-pdf crash.pdf`}},
 		{name: "compare", args: "<id> <id>", group: "Tests", run: cmdCompare,
 			help:     "two runs' summaries side by side",
 			examples: []string{`symphony-cli compare <run on one template> <run on the other>`}},

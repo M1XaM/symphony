@@ -5,12 +5,14 @@ package cli
 import (
 	"flag"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"symphony/engine/events"
+	"symphony/engine/report"
 	"symphony/engine/tests"
 )
 
@@ -37,6 +39,8 @@ func cmdScenarios(e *env, args []string) error {
 func cmdTest(e *env, args []string) error {
 	fset := flag.NewFlagSet("test", flag.ContinueOnError)
 	name := fset.String("name", "", "")
+	md := fset.String("report-md", "", "")
+	pdf := fset.String("report-pdf", "", "")
 	pos, err := parse(fset, args)
 	if err != nil {
 		return err
@@ -102,15 +106,50 @@ func cmdTest(e *env, args []string) error {
 	if err != nil {
 		return err
 	}
-	if e.json {
-		return e.printJSON(run)
+	// the reports are written whatever the verdict: a failed run is the one
+	// most worth reading
+	saved, err := writeReports(run, *md, *pdf)
+	if err != nil {
+		return err
 	}
-	fmt.Fprintln(e.out)
-	printRun(e, run)
+	if e.json {
+		if err := e.printJSON(run); err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintln(e.out)
+		printRun(e, run)
+		for _, path := range saved {
+			fmt.Fprintf(e.out, "\nreport: %s", path)
+		}
+		if len(saved) > 0 {
+			fmt.Fprintln(e.out)
+		}
+	}
 	if !run.Passed {
 		return errFailed
 	}
 	return nil
+}
+
+// writeReports writes a run's report as Markdown and as PDF, to the files
+// named ("" skips one), and returns the files it wrote.
+func writeReports(run tests.Run, md, pdf string) ([]string, error) {
+	var saved []string
+	for _, out := range []struct{ format, path string }{{report.FormatMarkdown, md}, {report.FormatPDF, pdf}} {
+		if out.path == "" {
+			continue
+		}
+		doc, err := report.Render(run, out.format)
+		if err != nil {
+			return saved, err
+		}
+		if err := os.WriteFile(out.path, doc, 0o644); err != nil {
+			return saved, err
+		}
+		saved = append(saved, out.path)
+	}
+	return saved, nil
 }
 
 func verdict(passed, aborted bool, running bool) string {
@@ -149,12 +188,30 @@ func cmdRuns(e *env, args []string) error {
 }
 
 func cmdRun(e *env, args []string) error {
+	fset := flag.NewFlagSet("run", flag.ContinueOnError)
+	md := fset.String("report-md", "", "")
+	pdf := fset.String("report-pdf", "", "")
+	args, err := parse(fset, args)
+	if err != nil {
+		return err
+	}
 	if len(args) != 1 {
 		return usagef("needs a run id")
 	}
 	run, err := e.a.GetRun(args[0])
 	if err != nil {
 		return err
+	}
+	saved, err := writeReports(run, *md, *pdf)
+	if err != nil {
+		return err
+	}
+	if len(saved) > 0 {
+		// asked for the report: say where it is rather than print the run
+		for _, path := range saved {
+			fmt.Fprintf(e.out, "report: %s\n", path)
+		}
+		return nil
 	}
 	if e.json {
 		return e.printJSON(run)

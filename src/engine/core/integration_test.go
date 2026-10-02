@@ -469,3 +469,63 @@ func TestIntegrationRetryAfterFailedApply(t *testing.T) {
 		t.Fatalf("still stored: %+v", recs)
 	}
 }
+
+// The window's engine follows the store and polls while it applies. A
+// deployment it applied itself must be usable the moment Apply returns, and
+// stay so: its nodes ready and their admin ports reachable.
+func TestIntegrationFollowingEngineApplies(t *testing.T) {
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	rt, err := runtime.NewDocker("symphony-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	if _, err := rt.Ping(ctx); err != nil {
+		t.Skip(err)
+	}
+	rt.GC(ctx)
+	defer rt.GC(context.Background())
+
+	src, _ := filepath.Abs("../..")
+	st, err := store.Open(filepath.Join(t.TempDir(), store.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	bus := events.NewBus()
+	bus.Subscribe(func(ev events.Event) {
+		if l, ok := ev.Payload.(events.LogPayload); ok && testing.Verbose() {
+			t.Log(l.Level, l.Source, l.Message)
+		}
+	})
+	eng := core.New(core.Options{Runtime: rt, Bus: bus, Images: images.NewEnsurer(os.DirFS(src)), Store: st, FollowStore: true})
+	eng.Restore(ctx)
+	eng.Start(ctx)
+	defer eng.Stop()
+
+	topo := spec.Presets()[0]
+	topo.Name = "IT follow"
+	actx, cancel := context.WithTimeout(ctx, 6*time.Minute)
+	defer cancel()
+	if err := eng.Apply(actx, topo); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	check := func(when string) {
+		t.Helper()
+		if _, err := eng.Control(ctx, topo.Name, "gateway", control.Command{Op: "load.status"}); err != nil {
+			t.Fatalf("%s: gateway: %v", when, err)
+		}
+		for id, s := range eng.Deployments()[0].Statuses {
+			if s.Ready != s.Replicas {
+				t.Errorf("%s: %s has %d/%d replicas ready (%s)", when, id, s.Ready, s.Replicas, s.State)
+			}
+		}
+	}
+	check("right after apply")
+	time.Sleep(8 * time.Second) // a few rounds of the poller and the store follower
+	check("a while after apply")
+	if err := eng.Teardown(ctx, topo.Name); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+}

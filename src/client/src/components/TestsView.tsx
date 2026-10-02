@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { fmtNum } from '../lib/format'
 import { selectDockerUp, selectIsApplied, useSymphonyStore } from '../store/useSymphonyStore'
-import type { Run, RunSummary, Scenario } from '../types/topology'
+import type { ReportFormat, Run, RunSummary, Scenario } from '../types/topology'
 import { Sparkline } from './Sparkline'
 
 const SERIES_CHOICES = ['sagas_per_sec', 'latency_p99_ms', 'error_rate', 'consumer_lag', 'cpu_pct']
@@ -45,7 +45,9 @@ function RunDetail({ run, onClose }: { run: Run; onClose(): void }) {
   return (
     <div className="run-detail">
       <div className="run-head">
-        <span className={`pill ${run.aborted ? '' : run.passed ? 'pill-running' : 'pill-failed'}`}>{run.aborted ? 'aborted' : run.passed ? 'passed' : 'failed'}</span>
+        <span className={`pill ${run.running ? 'pill-applying' : run.aborted ? '' : run.passed ? 'pill-running' : 'pill-failed'}`}>
+          {run.running ? 'running' : run.aborted ? 'aborted' : run.passed ? 'passed' : 'failed'}
+        </span>
         <span className="run-title">
           {run.name} on <b>{run.template}</b>
         </span>
@@ -72,7 +74,7 @@ function RunDetail({ run, onClose }: { run: Run; onClose(): void }) {
             </tbody>
           </table>
           <div className="pane-title">Assertions</div>
-          {run.assertions.length === 0 ? <div className="muted small">none</div> : null}
+          {run.assertions.length === 0 ? <div className="muted small">{run.running ? 'evaluated when the run ends' : 'none'}</div> : null}
           {run.assertions.map((a, i) => (
             <div key={i} className={`finding finding-${a.passed ? 'ok' : 'error'}`}>
               <span className="finding-sev">{a.passed ? 'pass' : 'fail'}</span>
@@ -175,6 +177,66 @@ function CompareView({ runs }: { runs: Run[] }) {
   )
 }
 
+/** The three dots at the end of a finished run's row: its report, as
+ *  Markdown or as PDF. While the report is being written the dots give way
+ *  to a spinner; the save dialog follows. */
+function RunMenu({ runId, busy, disabled, onExport }: { runId: string; busy: boolean; disabled: boolean; onExport(format: ReportFormat): void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', key)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', key)
+    }
+  }, [open])
+  const pick = (format: ReportFormat) => {
+    setOpen(false)
+    onExport(format)
+  }
+  if (busy) {
+    return (
+      <span className="run-menu" title="writing the report…">
+        <span className="spinner" role="status" aria-label="writing the report" />
+      </span>
+    )
+  }
+  return (
+    <span className="run-menu" ref={ref}>
+      <button
+        type="button"
+        className="btn btn-ghost btn-small"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={`more for run ${runId}`}
+        title="export the report"
+        disabled={disabled}
+        onClick={() => setOpen(!open)}
+      >
+        ⋯
+      </button>
+      {open ? (
+        <span className="run-menu-list" role="menu">
+          <button type="button" role="menuitem" className="run-menu-item" onClick={() => pick('md')}>
+            Export MD
+          </button>
+          <button type="button" role="menuitem" className="run-menu-item" onClick={() => pick('pdf')}>
+            Export PDF
+          </button>
+        </span>
+      ) : null}
+    </span>
+  )
+}
+
 export function TestsView() {
   const scenarios = useSymphonyStore((s) => s.scenarios)
   const runs = useSymphonyStore((s) => s.runs)
@@ -193,8 +255,18 @@ export function TestsView() {
   const viewRun = useSymphonyStore((s) => s.viewRun)
   const deleteRun = useSymphonyStore((s) => s.deleteRun)
   const toggleCompare = useSymphonyStore((s) => s.toggleCompare)
+  const exportingRun = useSymphonyStore((s) => s.exportingRun)
+  const exportRun = useSymphonyStore((s) => s.exportRun)
   const [selected, setSelected] = useState<string>(scenarios[0]?.id ?? '')
   const [params, setParams] = useState<Record<string, unknown>>({})
+
+  // a run opened while it is still going is read again as it goes
+  const watching = openRun?.running ? openRun.id : null
+  useEffect(() => {
+    if (!watching) return
+    const id = window.setInterval(() => void viewRun(watching), 2000)
+    return () => window.clearInterval(id)
+  }, [watching, viewRun])
 
   const kinds = useMemo(() => new Set<string>(kindKey ? kindKey.split(',') : []), [kindKey])
   const scenario = scenarios.find((s) => s.id === selected) ?? scenarios[0]
@@ -227,6 +299,7 @@ export function TestsView() {
             ×
           </button>
         ) : null}
+        {!r.running ? <RunMenu runId={r.id} busy={exportingRun === r.id} disabled={exportingRun !== null} onExport={(f) => void exportRun(r.id, f)} /> : null}
       </td>
     </tr>
   )

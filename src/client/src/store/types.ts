@@ -21,6 +21,7 @@ import type {
   Resources,
   Run,
   RunSummary,
+  ReportFormat,
   RuntimeStatus,
   Scenario,
   TestProgressEvent,
@@ -181,6 +182,9 @@ export interface TestsSlice {
   openRun: Run | null
   compareIds: string[]
   compareRuns: Run[]
+  /** The run whose report is being written (rendered, then the save
+   *  dialog), so its row can say so; null when none is. */
+  exportingRun: string | null
 
   refreshRuns(): Promise<void>
   startTest(scenario: string, params: Record<string, unknown>): Promise<void>
@@ -188,6 +192,8 @@ export interface TestsSlice {
   viewRun(id: string | null): Promise<void>
   deleteRun(id: string): Promise<void>
   toggleCompare(id: string): Promise<void>
+  /** Write a run's report: render it, then ask where to save it. */
+  exportRun(id: string, format: ReportFormat): Promise<void>
 }
 
 export type SymphonyState = EditorSlice & EngineSlice & PanelsSlice & LibrarySlice & TestsSlice

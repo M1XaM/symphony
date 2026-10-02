@@ -30,6 +30,10 @@ export function DeleteUserTemplate(arg1) {
   return window['go']['api']['API']['DeleteUserTemplate'](arg1);
 }
 
+export function ExportRunReport(arg1, arg2) {
+  return window['go']['api']['API']['ExportRunReport'](arg1, arg2);
+}
+
 export function GetDeployments() {
   return window['go']['api']['API']['GetDeployments']();
 }

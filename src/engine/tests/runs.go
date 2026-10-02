@@ -53,7 +53,8 @@ func (r *Runner) GetRun(id string) (Run, error) {
 		b, _ := json.Marshal(a.run)
 		var copy Run
 		_ = json.Unmarshal(b, &copy)
-		return copy, nil
+		copy.Running = true
+		return copy.complete(), nil
 	}
 	b, ok, err := r.store.RunBody(id)
 	if err != nil {
@@ -63,7 +64,10 @@ func (r *Runner) GetRun(id string) (Run, error) {
 		return Run{}, fmt.Errorf("tests: no run %q", id)
 	}
 	var run Run
-	return run, json.Unmarshal(b, &run)
+	if err := json.Unmarshal(b, &run); err != nil {
+		return Run{}, fmt.Errorf("tests: run %q: %w", id, err)
+	}
+	return run.complete(), nil
 }
 
 // DeleteRun removes a stored run.

@@ -1,6 +1,8 @@
 package tests
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"symphony/engine/spec"
@@ -139,5 +141,34 @@ func TestRecovery(t *testing.T) {
 	(&Runner{}).evaluate(run, Scenario{Assert: []Assertion{{Metric: "recovery_time_s", Op: "<=", Value: 30}}})
 	if run.Passed || run.Assertions[0].Passed || run.Summary["recovered"] != 0 {
 		t.Errorf("not recovered, yet: passed %v, summary %v", run.Passed, run.Summary)
+	}
+}
+
+// A run that is still going can be opened: it has no assertions, phases or
+// notes yet, and they must read as empty lists rather than as nothing.
+func TestGetRunOfARunInProgress(t *testing.T) {
+	r := &Runner{active: map[string]*activeRun{"r1": {run: &Run{ID: "r1", Scenario: "t01-baseline", Template: "T",
+		Series: map[string][]Point{"sagas_per_sec": series(40, 41)}}}}}
+	run, err := r.GetRun("r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !run.Running || run.Assertions == nil || run.Phases == nil || run.Notes == nil || run.Summary == nil || run.Params == nil {
+		t.Fatalf("running %v, assertions %v, phases %v, notes %v, summary %v, params %v",
+			run.Running, run.Assertions, run.Phases, run.Notes, run.Summary, run.Params)
+	}
+	b, _ := json.Marshal(run)
+	for _, want := range []string{`"assertions":[]`, `"phases":[]`, `"notes":[]`, `"summary":{}`, `"running":true`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("the JSON lacks %s: %s", want, b)
+		}
+	}
+	if len(run.Series["sagas_per_sec"]) != 2 {
+		t.Errorf("series so far: %v", run.Series)
+	}
+	// the copy is the caller's: changing it does not touch the run
+	run.Series["sagas_per_sec"][0].V = -1
+	if r.active["r1"].run.Series["sagas_per_sec"][0].V != 40 {
+		t.Error("GetRun handed out the live series")
 	}
 }

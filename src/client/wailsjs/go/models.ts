@@ -1,5 +1,19 @@
 export namespace api {
 	
+	export class ExportResult {
+	    path: string;
+	    cancelled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new ExportResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.cancelled = source["cancelled"];
+	    }
+	}
 	export class LogStreamState {
 	    enabled: boolean;
 	
@@ -714,6 +728,7 @@ export namespace tests {
 	    summary: Record<string, number>;
 	    assertions: AssertionResult[];
 	    notes: string[];
+	    running?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Run(source);
@@ -737,6 +752,7 @@ export namespace tests {
 	        this.summary = source["summary"];
 	        this.assertions = this.convertValues(source["assertions"], AssertionResult);
 	        this.notes = source["notes"];
+	        this.running = source["running"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

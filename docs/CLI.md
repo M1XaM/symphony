@@ -531,7 +531,7 @@ Docker: no. Only reads.
 
 #### test
 
-`symphony-cli test <scenario> <template|file> [--name NAME] [param=value...]`
+`symphony-cli test <scenario> <template|file> [--name NAME] [--report-md FILE] [--report-pdf FILE] [param=value...]`
 
 Run a scenario against a template and wait for the verdict.
 
@@ -539,9 +539,12 @@ The template is applied first when it is not running. Exits 3 when the run does
 not pass. The deployment is returned to the template afterwards and keeps running.
 
 - `--name NAME`: run it on the deployment of this name
+- `--report-md FILE`: write the run's report there as Markdown: verdict, topology, numbers per phase, timeline, data
+- `--report-pdf FILE`: write the report there as PDF, with a picture of the topology and a chart of every series
 
 ```sh
 symphony-cli test t04-crash "Choreography (saga)"
+symphony-cli test t04-crash "Choreography (saga)" --report-md crash.md --report-pdf crash.pdf
 symphony-cli --json test t01-baseline "Orchestration (saga)" rps=80 duration_s=30
 ```
 
@@ -561,12 +564,18 @@ Docker: no. Only reads.
 
 #### run
 
-`symphony-cli run <id>`
+`symphony-cli run <id> [--report-md FILE] [--report-pdf FILE]`
 
 One run's phases, summary and assertions (with --json: its series too).
 
+With --report-md or --report-pdf it writes the stored run's report instead.
+
+- `--report-md FILE`: write the run's report there as Markdown
+- `--report-pdf FILE`: write the run's report there as PDF
+
 ```sh
 symphony-cli run t04-crash-choreography-saga-1790000000
+symphony-cli run t04-crash-choreography-saga-1790000000 --report-pdf crash.pdf
 ```
 
 Docker: no. Only reads.

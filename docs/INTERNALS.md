@@ -157,7 +157,8 @@ installed. On macOS `bin/darwin/symphony` is a launcher script next to the copie
                            api (what the window and the CLI call), app (the
                            Wails window), cli, core (deployments), store
                            (SQLite state), planner, runtime (Docker),
-                           metrics, tests, ...
+                           metrics, tests, report (a run as Markdown or
+                           PDF), ...
       blocks/              the five block images and their shared library
       client/              React + React Flow frontend; wailsjs/ is generated
       build/               builder image and platform assets

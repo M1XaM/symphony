@@ -8,6 +8,8 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"sync"
 
 	"symphony/blocks/common/control"
@@ -18,6 +20,7 @@ import (
 	"symphony/engine/library"
 	"symphony/engine/logstream"
 	"symphony/engine/planner"
+	"symphony/engine/report"
 	"symphony/engine/runtime"
 	"symphony/engine/spec"
 	"symphony/engine/tests"
@@ -36,7 +39,17 @@ type API struct {
 
 	mu     sync.Mutex
 	docker events.RuntimeStatusPayload
+	// saveDialog asks the user where to save a file; nil outside the window
+	saveDialog SaveDialog
 }
+
+// SaveDialog asks where to save a file of the given kind ("md", "pdf"),
+// offering name. It returns "" when the user cancels.
+type SaveDialog func(name, format string) (string, error)
+
+// SetSaveDialog gives the API the window's save dialog. A package function,
+// so it is not exposed as a binding.
+func SetSaveDialog(a *API, fn SaveDialog) { a.saveDialog = fn }
 
 // ErrNoDocker is returned by every call that needs containers while the
 // Docker daemon does not answer.
@@ -289,6 +302,40 @@ func (a *API) ListRuns() ([]tests.RunSummary, error) {
 // GetRun returns one stored run with its series.
 func (a *API) GetRun(runID string) (tests.Run, error) {
 	return a.tests.GetRun(runID)
+}
+
+// ExportResult says where a report was saved, or that the user cancelled.
+type ExportResult struct {
+	Path      string `json:"path"`
+	Cancelled bool   `json:"cancelled"`
+}
+
+// ExportRunReport writes a stored run's report ("md" or "pdf"): the report
+// is rendered first, then the user is asked where to save it.
+func (a *API) ExportRunReport(runID, format string) (ExportResult, error) {
+	if a.saveDialog == nil {
+		return ExportResult{}, errors.New("no save dialog: reports are exported from the window, or with symphony-cli run <id> --report-md FILE")
+	}
+	run, err := a.tests.GetRun(runID)
+	if err != nil {
+		return ExportResult{}, err
+	}
+	doc, err := report.Render(run, format)
+	if err != nil {
+		return ExportResult{}, err
+	}
+	path, err := a.saveDialog(report.FileName(run.ID, format), format)
+	if err != nil {
+		return ExportResult{}, err
+	}
+	if path == "" {
+		return ExportResult{Cancelled: true}, nil
+	}
+	if err := os.WriteFile(path, doc, 0o644); err != nil {
+		return ExportResult{}, err
+	}
+	a.bus.Log("info", "test", fmt.Sprintf("report of %s saved to %s", run.ID, path))
+	return ExportResult{Path: path}, nil
 }
 
 // DeleteRun removes a stored run.

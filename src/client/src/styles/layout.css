@@ -184,3 +184,30 @@
   text-transform: none;
   color: var(--fg-dim);
 }
+
+/* what the error boundary shows in place of the app */
+.crash {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  max-width: 640px;
+  margin: 15vh auto 0;
+  padding: 0 24px;
+}
+
+.crash-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.crash-detail {
+  max-width: 100%;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  color: var(--err);
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}

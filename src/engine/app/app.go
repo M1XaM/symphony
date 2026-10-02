@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/wailsapp/wails/v2"
@@ -18,6 +19,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	wailsrt "github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"symphony/engine/api"
 	"symphony/engine/backend"
 	"symphony/engine/events"
 )
@@ -90,6 +92,13 @@ func Run(opts Options) error {
 		LogLevel:           logger.INFO,
 		LogLevelProduction: logger.INFO,
 		OnStartup: func(ctx context.Context) {
+			api.SetSaveDialog(b.API, func(name, format string) (string, error) {
+				return wailsrt.SaveFileDialog(ctx, wailsrt.SaveDialogOptions{
+					Title:           "Save the report",
+					DefaultFilename: name,
+					Filters:         []wailsrt.FileFilter{{DisplayName: strings.ToUpper(format) + " (*." + format + ")", Pattern: "*." + format}},
+				})
+			})
 			b.Start(ctx, func(name string, payload any) { wailsrt.EventsEmit(ctx, name, payload) })
 		},
 		OnShutdown: func(ctx context.Context) {

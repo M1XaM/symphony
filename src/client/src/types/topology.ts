@@ -381,6 +381,21 @@ export interface Run extends RunSummary {
   notes: string[]
 }
 
+/** A run as the views can walk it: every list and map present. A run that
+ *  is still going has no assertions yet, and one from an older version may
+ *  lack a field; a missing list must not take the window down. */
+export function normalizeRun(run: Partial<Run> & Pick<Run, 'id'>): Run {
+  return {
+    ...(run as Run),
+    params: run.params ?? {},
+    phases: run.phases ?? [],
+    series: run.series ?? {},
+    summary: run.summary ?? {},
+    assertions: run.assertions ?? [],
+    notes: run.notes ?? [],
+  }
+}
+
 // --- boundary conversions --------------------------------------------------
 
 /** Build the generated class instance the binding expects. */
@@ -404,4 +419,13 @@ export function fromWireTopology(t: spec.Topology | Topology): Topology {
 
 export function toWireFault(f: FaultSpec): spec.FaultSpec {
   return spec.FaultSpec.createFrom(f)
+}
+
+/** The formats a run's report can be exported in. */
+export type ReportFormat = 'md' | 'pdf'
+
+/** Where an exported report went, or that the save dialog was cancelled. */
+export interface ExportResult {
+  path: string
+  cancelled: boolean
 }

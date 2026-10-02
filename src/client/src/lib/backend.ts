@@ -4,12 +4,14 @@ import * as API from '../../wailsjs/go/api/API'
 import { control, spec } from '../../wailsjs/go/models'
 import {
   fromWireTopology,
+  normalizeRun,
   toWireFault,
   toWireTopology,
   type ContainerRow,
   type ControlCommand,
   type ControlResult,
   type DeploymentInfo,
+  type ExportResult,
   type FaultSpec,
   type HostStatsEvent,
   type LogEvent,
@@ -19,6 +21,7 @@ import {
   type Resources,
   type Run,
   type RunSummary,
+  type ReportFormat,
   type RuntimeStatus,
   type Scenario,
   type Topology,
@@ -131,10 +134,15 @@ export const backend = {
     return JSON.parse(JSON.stringify(await API.ListRuns())) as RunSummary[]
   },
   async getRun(runId: string): Promise<Run> {
-    return JSON.parse(JSON.stringify(await API.GetRun(runId))) as Run
+    return normalizeRun(JSON.parse(JSON.stringify(await API.GetRun(runId))) as Run)
   },
   deleteRun(runId: string): Promise<void> {
     return API.DeleteRun(runId)
+  },
+  /** Render a run's report, then ask where to save it. */
+  async exportRunReport(runId: string, format: ReportFormat): Promise<ExportResult> {
+    const res = await API.ExportRunReport(runId, format)
+    return { path: res.path, cancelled: res.cancelled }
   },
 }
 

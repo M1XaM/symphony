@@ -144,3 +144,71 @@
 .finding-ok .finding-sev {
   color: var(--ok);
 }
+
+/* the three dots at the end of a run's row, and the menu they open */
+.run-menu {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  vertical-align: middle;
+}
+
+/* It opens sideways, inside the row: the runs are at the bottom of a
+   scrolling drawer, where a list hanging below the dots would be cut off. */
+.run-menu-list {
+  position: absolute;
+  top: 50%;
+  right: 100%;
+  z-index: 5;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  transform: translateY(-50%);
+  background: var(--bg-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+}
+
+.run-menu-item {
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--fg);
+  text-align: left;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.run-menu-item:hover,
+.run-menu-item:focus-visible {
+  background: var(--bg-3);
+  outline: none;
+}
+
+/* the report being written */
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2s;
+  }
+}
