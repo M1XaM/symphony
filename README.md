@@ -13,12 +13,12 @@ Every `vX.Y.Z` tag publishes a release with one zip per platform (plus
 
 | archive | contains |
 |---------|----------|
-| `symphony-vX.Y.Z-linux-amd64.zip`   | `symphony` (the app) and `symphony-cli` (the command line), Linux x86-64 |
-| `symphony-vX.Y.Z-windows-amd64.zip` | `symphony.exe`, `symphony-cli.exe` and `README.txt`, Windows 10/11 x86-64 |
+| `symphony-vX.Y.Z-linux-amd64.zip`   | `symphony` (the app), `symphony-cli` (the command line) and `GUIDE.md` (the CLI's guide), Linux x86-64 |
+| `symphony-vX.Y.Z-windows-amd64.zip` | `symphony.exe`, `symphony-cli.exe`, `GUIDE.md` and `README.txt`, Windows 10/11 x86-64 |
 
 Each unzips to a folder of the same name. Keep the app and the CLI together
 in it: they keep their state in one file next to the binary (see
-[State](#state)), so that is how they share it.
+[State](docs/INTERNALS.md#state)), so that is how they share it.
 
 **Linux.** The binary needs glibc 2.34+ (Ubuntu 22.04, Debian 12, Fedora 35 or
 newer) with GTK 3 and WebKitGTK 4.1:
@@ -96,215 +96,36 @@ the same state database, the same containers. Whatever it applies, changes
 or tears down shows up in an open window within a few seconds, and it works
 on whatever the window applied.
 
-    symphony-cli status                                   # Docker, the database, every deployment
-    symphony-cli templates
-    symphony-cli apply "Orchestration (saga)"             # waits until it runs
-    symphony-cli inspect "Orchestration (saga)" payment   # health checks, config, limits
-    symphony-cli load "Orchestration (saga)" rps=40 concurrency=32
-    symphony-cli top "Orchestration (saga)"               # live metrics, Ctrl-C ends
-    symphony-cli fault "Orchestration (saga)" e-proxy-pay drop rate=0.3 --for 20s
-    symphony-cli fault "Orchestration (saga)" inventory pause --for 10s
-    symphony-cli config "Orchestration (saga)" orchestrator timeout_ms=1500
-    symphony-cli resources "Orchestration (saga)" payment --cpus 0.25 --memory-mb 128
-    symphony-cli test t04-crash "Choreography (saga)" duration_s=45
-    symphony-cli runs
-    symphony-cli teardown "Orchestration (saga)"
+Its guide is **[docs/CLI.md](docs/CLI.md)**: the concepts and conventions,
+the usual workflows with examples, every command, the fault kinds and the
+scenarios, and a section of rules for agentic models that drive it. The same
+guide ships in the release archives as `GUIDE.md`, and the binary itself
+answers:
 
-| group | commands |
-|-------|----------|
-| topologies  | `templates`, `show`, `save`, `delete`, `validate`, `plan`, `apply`, `teardown`, `restore` |
-| deployments | `status`, `inspect`, `config`, `resources`, `fault`, `clear`, `load`, `control`, `logs`, `top`, `ps`, `log` |
-| tests       | `scenarios`, `test`, `runs`, `run`, `compare`, `rm-run` |
+    symphony-cli --help              # every command
+    symphony-cli <command> --help    # one command, with examples
+    symphony-cli generate-guide      # writes GUIDE.md next to the binary
+    symphony-cli --json-help         # the whole catalogue as JSON
 
-`symphony-cli help` lists them and `symphony-cli help <command>` explains
-one. A template argument is a built-in or saved template's name, a
-running deployment's name, or a topology JSON file (`show` prints one to
-start from; `-` reads stdin); `--name` applies it under another name.
-`fault` takes a node or an edge id (the fault then hits that link only);
-kill, pause, crash and a whole-node partition do not end by themselves, so
-with `--for` the CLI stays until they do. `--json` prints results for scripts, `-v`
-every engine log line, and `test` exits with 3 when the run does not pass.
+## Internals
 
-## How it runs
+**[docs/INTERNALS.md](docs/INTERNALS.md)** covers how a topology becomes
+containers (the five block images, their wiring and the admin port), where
+the state lives and what happens to it across restarts, building from source
+(the host needs only Docker and make), and how a release is made.
 
-Every node kind is a prebuilt, universal container image (`src/blocks/`):
+## What is real and what is simulated
 
-| block | kind | role |
-|-------|------|------|
-| `gateway`  | `infra`   | ingress + load generator; measures every saga end to end |
-| `service`  | `service` | worker pool running a behaviour program per inbound edge; orchestrator, participant or choreography step depending on its links |
-| `broker`   | `broker`  | topics, partitions, consumer groups, at-least-once push delivery |
-| `database` | `db`      | bounded connection pool, latency model, transactions, storage cap |
-| `proxy`    | `proxy`   | forwards paired edges; where link faults are injected |
-
-Applying a topology creates a Docker network per deployment
-(`symphony-<slug>`), one container per replica (`<slug>-<node>[-n]`) with
-its wiring in `SYMPHONY_LINKS`, waits for each block's own `/health`, and
-then drives it through the admin port every block publishes on
-`127.0.0.1`: hot config (`config.set`), faults (`fault.set`, `chaos.*`), the
-load generator (`load.set`), behaviour programs, logs and metrics. Container
-limits (CPU, RAM), pause/kill and network partitions go through the Docker
-Engine API directly. The contract is documented in `src/blocks/README.md`.
-
-Everything Symphony creates carries `symphony.owner=<instance id>` labels, so
-it never touches other containers.
-
-### State
-
-The state of every deployment lives in a SQLite database, `symphony.db`, in
-the directory of the binary: its topology (with every hot config and
-resource change made since), admin token, network, phase, the faults
-injected into it and the load its gateway was told to drive without an end. It is written as things change,
-before an apply creates anything, so it always describes what should be
-running.
-
-Containers keep running when the window closes. When Symphony opens again
-(and whenever Docker comes back) it reads the database and:
-
-- attaches deployments whose containers are all still up, as they are;
-- recreates, from the stored topology, a deployment whose containers are
-  gone or stopped (Docker restarted, the machine rebooted) or whose apply
-  was cut short, and starts its load again;
-- finishes a teardown that was cut short;
-- ends the faults that became due while it was closed (a paused container
-  is resumed, a killed one started, a partitioned one reconnected) and
-  keeps the timers of the ones still running: faults are stored with the
-  deployment, so they do not depend on the process that injected them;
-- removes containers of this installation that no deployment owns.
-
-`symphony-cli restore` does the same from a terminal; other CLI commands
-attach to what runs without repairing anything.
-
-| environment variable | effect |
-|----------------------|--------|
-| `SYMPHONY_DB=<file>`           | keep the state database there instead of next to the binary (`--db` for the CLI) |
-| `SYMPHONY_TEARDOWN_ON_EXIT=1`  | tear every deployment down when the window closes |
-| `DOCKER_HOST`                  | the Docker daemon to use, as for the docker CLI |
-
-If the binary's directory is not writable, the database goes to the user
-config directory instead (`~/.config/symphony` on Linux, `%AppData%\symphony`
-on Windows). That directory also holds `templates.json` (saved templates).
-Test results are in the database too, so the window and the CLI see the same
-runs. A database created next to a binary of an older version takes over
-what that version kept in the config directory: the instance id and the
-deployment records, so its containers are still recognised, and the runs it
-stored as files in `runs/`.
-
-## Build from source
-
-The build runs inside a Docker container, so the host needs only **Docker**
-and **make**:
-
-    make                    # -> bin/linux/ and bin/windows/
-    ./bin/linux/symphony    # or: make run
-
-    bin/
-      linux/     symphony  symphony-cli  symphony.desktop
-      windows/   symphony.exe  symphony-cli.exe
-
-| target | does |
-|--------|------|
-| `make` / `make build` | `wails build` and the CLI build in the container, for Linux and Windows, into `bin/<os>/` |
-| `make cli`            | build only the `symphony-cli` binaries |
-| `make dist VERSION=vX.Y.Z` | zip `bin/` into `dist/`: the two release archives and `SHA256SUMS` |
-| `make run`            | build for Linux, then launch `bin/linux/symphony` |
-| `make desktop`        | register `bin/linux/symphony.desktop` with the desktop, so Symphony appears in the app grid (Linux) |
-| `make blocks`         | build the five block images (`symphony/<block>:dev`) |
-| `make test`           | Go unit tests + blocks contract test (blocks run as processes, no Docker), and the client's unit tests |
-| `make lint`           | gofmt, `go vet` (window and CLI builds) and the client typecheck, in the container |
-| `make integration`    | engine tests against the host's Docker daemon (real containers) |
-| `make tag vX.Y.Z`     | tag HEAD and push the tag, which publishes a release (see below) |
-| `make image`          | (re)build the `symphony-builder` image from `src/build/docker` |
-| `make shell`          | interactive shell inside the builder container |
-| `make clean`          | remove `bin/`, `dist/`, `src/build/bin/`, `src/client/dist/` |
-| `make clean-docker`   | `clean` plus remove the builder image and cache volumes |
-
-The Linux app is linked against glibc, GTK 3 and WebKitGTK 4.1 from
-Debian 12; the Windows one is cross-compiled in the same container.
-`PLATFORM=linux/amd64` (or `windows/amd64`) builds one platform only. macOS
-cannot be cross-compiled without Apple's SDK; build natively on a Mac with
-`make build-local` (output in `bin/darwin/`).
-
-The CLI is the same Go package built with a different tag: the module root
-builds the window by default and `symphony-cli` with `-tags cli`. It uses no
-webview and no cgo, so outside the container it is just
-
-    cd src && CGO_ENABLED=0 go build -tags cli -o ../bin/linux/symphony-cli .
-
-After changing anything in `src/blocks`, run `make blocks`: an image built
-that way is the developer's, and the app leaves it alone unless it was built
-for another version of the blocks contract (`wire.Contract`, the
-`symphony.contract` image label). The images the app builds itself carry a
-digest of the sources they came from (`symphony.source`), so a newer
-Symphony replaces the ones an older one built.
-
-### Native build (optional)
-
-Without Docker, install Go 1.27+, Node 22+ and the Wails platform
-dependencies. On Debian/Ubuntu:
-
-    sudo apt install gcc pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
-
-Then:
-
-    make deps         # go mod tidy, npm install, install the wails CLI if absent
-    make build-local  # wails build + CLI build on the host -> bin/<host os>/
-    make dev          # wails dev with hot reload (needs a display)
-    make check        # go vet (window and CLI builds) + client typecheck
-    make bindings     # regenerate src/client/wailsjs after changing the Go API
-
-On Linux the Makefile adds `-tags webkit2_41` when only WebKitGTK 4.1 is
-installed. On macOS `bin/darwin/symphony` is a launcher script next to the copied
-`.app` bundle.
-
-### Layout
-
-    Makefile               build, test and release targets
-    .github/workflows/     ci.yml: lint and tests on every push and pull request
-                           release.yml: build and publish on a vX.Y.Z tag
-    src/                   Wails project root and Go module "symphony"
-      main.go              the window's entry: embeds the frontend
-      main_cli.go          symphony-cli's entry (-tags cli)
-      blocks.go            the block sources both binaries embed
-      cmd/symphony/        the window serving client/dist from disk (go run)
-      engine/              the backend: backend (assembles the services),
-                           api (what the window and the CLI call), app (the
-                           Wails window), cli, core (deployments), store
-                           (SQLite state), planner, runtime (Docker),
-                           metrics, tests, ...
-      blocks/              the five block images and their shared library
-      client/              React + React Flow frontend; wailsjs/ is generated
-      build/               builder image and platform assets
-
-## Releasing
-
-    make tag v1.2.3
-
-checks that the version is `vX.Y.Z`, that the working tree has no uncommitted
-changes, that the tag does not exist yet and that HEAD is already on the
-remote, then creates an annotated tag and pushes it. The push starts
-`.github/workflows/release.yml`, which:
-
-1. runs the lint and the unit tests, then builds the Linux and the Windows
-   binaries (the app and the CLI) in the builder container;
-2. runs the release gate (`.github/scripts/verify-release.sh`) on a clean
-   Ubuntu runner: the Linux binary must be a plain ELF executable that the
-   desktop recognises as `application/x-executable`, and must start headless
-   with no terminal, no stdin and no Docker, and keep running while starting nothing but
-   WebKit's own helper processes; the Windows binary must be a GUI-subsystem
-   executable, so no console window opens with it;
-3. runs a smoke test of the Linux CLI;
-4. zips each platform (`make dist`);
-5. only if all of that passes, publishes the GitHub Release with the two
-   zips, `SHA256SUMS` and notes generated from the commits since the last
-   tag.
-
-Starting the workflow by hand from the Actions tab runs steps 1 to 4 only,
-which is a dry run of a release (the zips are kept as a workflow artifact).
-
-## What is still simulated
+Real: every node is a container on a Docker network of its own, with real
+HTTP between them, real cgroup limits (CPU throttling, the OOM killer), and
+kill, pause and network partition done by Docker.
 
 | piece | today | where the real thing goes |
 |-------|-------|---------------------------|
-| Network-level shaping (bandwidth, netem) | done in the proxy block at HTTP level | tc/netem needs `NET_ADMIN`; add per-link if a scenario needs it on a link without a proxy |
-| Third-party images | every node runs a Symphony block | a thin adapter block speaking the same contract in front of a real Postgres/Kafka |
+| What a service does | a behaviour program: burn CPU, wait, call, publish, use the database. There is no business logic | an image of your own that speaks the blocks contract ([`src/blocks/README.md`](src/blocks/README.md)) |
+| Broker | the `broker` block: topics, partitions, consumer groups and at-least-once push delivery, in memory. Its log is gone when the container restarts | an adapter block that speaks the contract on the admin port in front of a real Kafka or RabbitMQ |
+| Database | the `database` block: an in-memory key-value store with a connection pool, a latency model, row locks and a storage cap. Its rows are gone when the container restarts | the same kind of adapter in front of a real Postgres |
+| Link faults (latency, drop, error, timeout, slow, corrupt, duplicate) | applied by the blocks themselves to HTTP requests, on either end of any edge; the proxy block is one more place to put them. Packets are never touched | `tc`/netem in the container's network namespace, which needs `NET_ADMIN` |
+| Load | synthetic sagas minted by the gateway block's generator | publishing the gateway's ingress port, so any load tool can drive a topology |
+| Third-party images | a node's image can be changed, but only Symphony's blocks have the admin port and the per-edge endpoints: another image can be started, limited, killed and paused, and nothing else | the adapter blocks above |
+| Scale | one Docker host | another implementation of the engine's `Runtime` interface (Kubernetes) |

@@ -26,6 +26,8 @@
 #   make lint            -> gofmt, go vet (window and CLI builds) and the client
 #                           typecheck, in the container
 #   make integration     -> engine tests against the host's Docker daemon
+#   make docs            -> regenerate docs/CLI.md, the CLI's guide (what
+#                           `symphony-cli generate-guide` writes)
 #   make tag vX.Y.Z      -> tag HEAD and push the tag; CI builds and publishes
 #                           the release (.github/workflows/release.yml)
 #
@@ -83,7 +85,7 @@ DOCKER_RUN = $(DOCKER) run --rm \
   -v $(IMAGE)-node-modules:/work/client/node_modules \
   -e HOST_UID=$(HOST_UID) -e HOST_GID=$(HOST_GID)
 
-.PHONY: build cli dist image shell run clean clean-docker build-local dev deps bindings check desktop blocks test lint integration tag
+.PHONY: build cli dist image shell run clean clean-docker build-local dev deps bindings check desktop blocks test lint integration docs tag
 
 # --- block images ------------------------------------------------------------
 
@@ -114,6 +116,15 @@ lint: image $(CLIENT)/dist
 	  fmt=$$(gofmt -l blocks engine cmd *.go) && [ -z "$$fmt" ] || { echo "gofmt needed:"; echo "$$fmt"; exit 1; }; \
 	  go vet ./... && go vet -tags cli . && \
 	  cd client && { [ -d node_modules/.bin ] || npm ci; } && npm run typecheck'
+	@$(GUIDE) | cmp -s - docs/CLI.md || \
+	  { echo "docs/CLI.md is not what symphony-cli generate-guide writes: run make docs"; exit 1; }
+
+# docs/CLI.md is the guide the CLI generates, checked in so it can be read
+# without the binary. It is written from the command table in src/engine/cli.
+GUIDE = $(DOCKER_RUN) $(IMAGE) go run -tags cli . generate-guide --out -
+
+docs: image
+	$(GUIDE) > docs/CLI.md.tmp && mv docs/CLI.md.tmp docs/CLI.md
 
 # Runs inside the builder container with the host's Docker socket and network,
 # so the engine can create real containers and reach their admin ports.
