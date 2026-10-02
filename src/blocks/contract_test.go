@@ -49,14 +49,34 @@ type proc struct {
 	token       string
 }
 
-func freePort(t *testing.T) int {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+// reserve picks a data port and an admin port for every node, all different.
+// The listeners that find them are held open until every port is known:
+// asking for one free port at a time can hand out the same port twice, and
+// the block that then fails to bind never becomes healthy.
+func reserve(t *testing.T, nodes ...string) map[string]int {
+	t.Helper()
+	ports := map[string]int{}
+	var held []net.Listener
+	defer func() {
+		for _, l := range held {
+			l.Close()
+		}
+	}()
+	for _, n := range nodes {
+		for _, key := range []string{n, adminKey(n)} {
+			l, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			held = append(held, l)
+			ports[key] = l.Addr().(*net.TCPAddr).Port
+		}
 	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port
+	return ports
 }
+
+// adminKey is where reserve keeps a node's admin port.
+func adminKey(node string) string { return node + "/admin" }
 
 type nodeSpec struct {
 	block  string
@@ -70,7 +90,7 @@ func start(t *testing.T, spec nodeSpec, ports map[string]int) *proc {
 	t.Helper()
 	p := &proc{name: spec.node, token: "test-token"}
 	p.data = ports[spec.node]
-	p.admin = freePort(t)
+	p.admin = ports[adminKey(spec.node)]
 	links, _ := json.Marshal(spec.links)
 	cfg, _ := json.Marshal(spec.config)
 	p.cmd = exec.Command(bins[spec.block])
@@ -199,10 +219,7 @@ func url(ports map[string]int, node string) string {
 
 // TestOrchestration: gateway -> orchestrator -> proxy -> payment, orchestrator -> db.
 func TestOrchestration(t *testing.T) {
-	ports := map[string]int{}
-	for _, n := range []string{"gateway", "orchestrator", "toxiproxy", "payment", "postgres"} {
-		ports[n] = freePort(t)
-	}
+	ports := reserve(t, "gateway", "orchestrator", "toxiproxy", "payment", "postgres")
 	db := start(t, nodeSpec{block: "database", node: "postgres",
 		links:  map[string]any{"in": []any{link("e-orch-db", "uses", "orchestrator", "postgres")}},
 		config: map[string]any{"max_connections": 4, "write_ms": 1, "fsync_ms": 1}}, ports)
@@ -317,12 +334,7 @@ func TestOrchestration(t *testing.T) {
 
 // TestChoreography: gateway -> order -> kafka -> (proxy) -> payment -> kafka -> inventory (sink).
 func TestChoreography(t *testing.T) {
-	ports := map[string]int{}
-	for _, n := range []string{"gateway", "order", "kafka", "toxiproxy", "payment", "inventory"} {
-		ports[n] = freePort(t)
-	}
-	gwAdmin := freePort(t)
-	_ = gwAdmin
+	ports := reserve(t, "gateway", "order", "kafka", "toxiproxy", "payment", "inventory")
 	inv := start(t, nodeSpec{block: "service", node: "inventory",
 		links: map[string]any{"in": []any{withTopic(link("e-inv-sub", "subscribes", "kafka", "inventory"), "payment.completed")}}}, ports)
 	pay := start(t, nodeSpec{block: "service", node: "payment",
