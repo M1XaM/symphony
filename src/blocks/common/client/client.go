@@ -272,6 +272,15 @@ func (c *Client) TargetStates() []map[string]any {
 	return out
 }
 
+// Reset closes every target's breaker and forgets its failures
+// (state.reset): what a link went through before must not decide the first
+// seconds of what is measured next.
+func (c *Client) Reset() {
+	for _, b := range c.breakers {
+		b.ok()
+	}
+}
+
 // TargetsUp counts targets whose breaker is closed.
 func (c *Client) TargetsUp() int {
 	n := 0

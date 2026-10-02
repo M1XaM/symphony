@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // Labels are a small ordered set of key=value pairs.
@@ -52,8 +53,19 @@ var Buckets = []float64{1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10
 
 const ringSize = 2048
 
+// DefaultWindow is how far back a snapshot's percentiles look unless the
+// reader asks for another window.
+const DefaultWindow = 5 * time.Second
+
+type sample struct {
+	at int64 // unix ms
+	ms float64
+}
+
 // Histogram records latencies: cumulative buckets for exposition plus a ring
-// of recent samples for accurate percentiles over the last ~minute.
+// of recent samples, each with the time it was taken, for accurate
+// percentiles over a window that ends now. Percentiles over everything since
+// the start would still show a fault minutes after it ended.
 type Histogram struct {
 	Name   string
 	Labels Labels
@@ -62,9 +74,16 @@ type Histogram struct {
 	counts []int64
 	count  int64
 	sum    float64
-	ring   []float64
+	ring   []sample
 	pos    int
-	full   bool
+	now    func() time.Time // the clock, replaced in tests
+}
+
+func (h *Histogram) clock() time.Time {
+	if h.now != nil {
+		return h.now()
+	}
+	return time.Now()
 }
 
 func (h *Histogram) Observe(ms float64) {
@@ -78,45 +97,55 @@ func (h *Histogram) Observe(ms float64) {
 			break
 		}
 	}
+	s := sample{at: h.clock().UnixMilli(), ms: ms}
 	if len(h.ring) < ringSize {
-		h.ring = append(h.ring, ms)
+		h.ring = append(h.ring, s)
 	} else {
-		h.ring[h.pos] = ms
+		h.ring[h.pos] = s
 		h.pos = (h.pos + 1) % ringSize
-		h.full = true
 	}
 }
 
-// Snapshot is the exported form of a histogram.
+// Snapshot is the exported form of a histogram. Count, SumMs and Buckets
+// cover everything since the block started; the percentiles and Max cover
+// the Recent samples of the last WindowMs (zero when there were none).
 type HistogramSnapshot struct {
-	Name    string           `json:"name"`
-	Labels  Labels           `json:"labels,omitempty"`
-	Count   int64            `json:"count"`
-	SumMs   float64          `json:"sum_ms"`
-	P50     float64          `json:"p50_ms"`
-	P90     float64          `json:"p90_ms"`
-	P99     float64          `json:"p99_ms"`
-	Max     float64          `json:"max_ms"`
-	Buckets map[string]int64 `json:"buckets"`
+	Name     string           `json:"name"`
+	Labels   Labels           `json:"labels,omitempty"`
+	Count    int64            `json:"count"`
+	SumMs    float64          `json:"sum_ms"`
+	WindowMs int64            `json:"window_ms"`
+	Recent   int              `json:"recent"`
+	P50      float64          `json:"p50_ms"`
+	P90      float64          `json:"p90_ms"`
+	P99      float64          `json:"p99_ms"`
+	Max      float64          `json:"max_ms"`
+	Buckets  map[string]int64 `json:"buckets"`
 }
 
-func (h *Histogram) snapshot() HistogramSnapshot {
+func (h *Histogram) snapshot(window time.Duration) HistogramSnapshot {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	s := HistogramSnapshot{Name: h.Name, Labels: h.Labels, Count: h.count, SumMs: round1(h.sum), Buckets: map[string]int64{}}
+	s := HistogramSnapshot{Name: h.Name, Labels: h.Labels, Count: h.count, SumMs: round1(h.sum), WindowMs: window.Milliseconds(), Buckets: map[string]int64{}}
 	var cum int64
 	for i, b := range Buckets {
 		cum += h.counts[i]
 		s.Buckets[fmt.Sprintf("%g", b)] = cum
 	}
 	s.Buckets["+Inf"] = h.count
-	if len(h.ring) > 0 {
-		sorted := append([]float64(nil), h.ring...)
-		sort.Float64s(sorted)
-		s.P50 = round1(pct(sorted, 0.50))
-		s.P90 = round1(pct(sorted, 0.90))
-		s.P99 = round1(pct(sorted, 0.99))
-		s.Max = round1(sorted[len(sorted)-1])
+	since := h.clock().Add(-window).UnixMilli()
+	var recent []float64
+	for _, smp := range h.ring {
+		if smp.at >= since {
+			recent = append(recent, smp.ms)
+		}
+	}
+	if s.Recent = len(recent); s.Recent > 0 {
+		sort.Float64s(recent)
+		s.P50 = round1(pct(recent, 0.50))
+		s.P90 = round1(pct(recent, 0.90))
+		s.P99 = round1(pct(recent, 0.99))
+		s.Max = round1(recent[len(recent)-1])
 	}
 	return s
 }
@@ -127,7 +156,7 @@ func (h *Histogram) reset() {
 	for i := range h.counts {
 		h.counts[i] = 0
 	}
-	h.count, h.sum, h.ring, h.pos, h.full = 0, 0, nil, 0, false
+	h.count, h.sum, h.ring, h.pos = 0, 0, nil, 0
 }
 
 func pct(sorted []float64, p float64) float64 {
@@ -193,7 +222,16 @@ type Document struct {
 	Histograms []HistogramSnapshot `json:"histograms"`
 }
 
+// Snapshot exports every metric, with percentiles over DefaultWindow.
 func (r *Registry) Snapshot(ts int64) Document {
+	return r.SnapshotWindow(ts, DefaultWindow)
+}
+
+// SnapshotWindow is Snapshot with percentiles over the given window.
+func (r *Registry) SnapshotWindow(ts int64, window time.Duration) Document {
+	if window <= 0 {
+		window = DefaultWindow
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	d := Document{Ts: ts, Counters: []CounterSnapshot{}, Histograms: []HistogramSnapshot{}}
@@ -202,7 +240,7 @@ func (r *Registry) Snapshot(ts int64) Document {
 			d.Counters = append(d.Counters, CounterSnapshot{Name: c.Name, Labels: c.Labels, Value: c.Value()})
 		}
 		if h, ok := r.hists[key]; ok {
-			d.Histograms = append(d.Histograms, h.snapshot())
+			d.Histograms = append(d.Histograms, h.snapshot(window))
 		}
 	}
 	return d

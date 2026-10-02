@@ -9,6 +9,7 @@ import (
 	"hash/fnv"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -144,10 +145,10 @@ func main() {
 			return b.Config.All(), nil
 		})
 	}
-	alias("pool.set", "max_connections", "statement_timeout_ms")
-	alias("latency.set", "read_ms", "write_ms", "fsync_ms")
-	alias("store.set", "max_rows", "hot_key_prefix")
-	b.Control.Handle("store.fill", func(cmd control.Command) (any, error) {
+	alias(control.OpPoolSet, "max_connections", "statement_timeout_ms")
+	alias(control.OpLatencySet, "read_ms", "write_ms", "fsync_ms")
+	alias(control.OpStoreSet, "max_rows", "hot_key_prefix")
+	b.Control.Handle(control.OpStoreFill, func(cmd control.Command) (any, error) {
 		n := cmd.Int("rows", 1000)
 		d.storeMu.Lock()
 		for i := 0; i < n; i++ {
@@ -158,7 +159,7 @@ func main() {
 		d.rows.Set(int64(rows))
 		return map[string]any{"rows": rows}, nil
 	})
-	b.Control.Handle("store.get", func(cmd control.Command) (any, error) {
+	b.Control.Handle(control.OpStoreGet, func(cmd control.Command) (any, error) {
 		key := cmd.String("key", "")
 		d.storeMu.RLock()
 		defer d.storeMu.RUnlock()
@@ -175,7 +176,7 @@ func main() {
 		}
 		return out, nil
 	})
-	b.Control.Handle("store.clear", func(cmd control.Command) (any, error) {
+	b.Control.Handle(control.OpStoreClear, func(cmd control.Command) (any, error) {
 		d.storeMu.Lock()
 		d.store = map[string]string{}
 		d.storeMu.Unlock()
@@ -264,10 +265,31 @@ func (d *database) handle(in server.Inbound) (json.RawMessage, error) {
 	return res, nil
 }
 
-func (d *database) stripe(key string) *sync.Mutex {
+// stripeOf is the index of the lock a key falls under.
+func stripeOf(key string) int {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(key))
-	return &d.locks[int(h.Sum32())%stripes]
+	return int(h.Sum32() % stripes)
+}
+
+func (d *database) stripe(key string) *sync.Mutex {
+	return &d.locks[stripeOf(key)]
+}
+
+// txnStripes lists the locks a transaction needs, each once and in
+// ascending order: two transactions over the same keys then take them in
+// the same order and cannot deadlock.
+func txnStripes(ops []op) []int {
+	seen := map[int]bool{}
+	var out []int
+	for _, sub := range ops {
+		if i := stripeOf(sub.Key); !seen[i] {
+			seen[i] = true
+			out = append(out, i)
+		}
+	}
+	sort.Ints(out)
+	return out
 }
 
 func (d *database) exec(o op) (json.RawMessage, error) {
@@ -316,27 +338,15 @@ func (d *database) exec(o op) (json.RawMessage, error) {
 		return json.Marshal(out)
 	case "txn":
 		// lock every key in a stable order, apply, fsync once
-		keys := map[string]bool{}
-		for _, sub := range o.Ops {
-			keys[sub.Key] = true
-		}
-		var locked []*sync.Mutex
-		seen := map[*sync.Mutex]bool{}
-		for k := range keys {
-			mu := d.stripe(k)
-			if !seen[mu] {
-				seen[mu] = true
-				locked = append(locked, mu)
-			}
-		}
+		locked := txnStripes(o.Ops)
 		d.waiting.Add(1)
-		for _, mu := range locked {
-			mu.Lock()
+		for _, i := range locked {
+			d.locks[i].Lock()
 		}
 		d.waiting.Add(-1)
 		defer func() {
-			for _, mu := range locked {
-				mu.Unlock()
+			for _, i := range locked {
+				d.locks[i].Unlock()
 			}
 		}()
 		time.Sleep(d.b.Config.Duration("write_ms", 2*time.Millisecond) * time.Duration(max(1, len(o.Ops))))

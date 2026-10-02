@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+// Contract is the version of the blocks contract (the control operations,
+// the admin endpoints and this envelope). It is reported in /health and
+// stamped on the block images as the symphony.contract label, which is how
+// the engine tells an image built for an older contract from a current one.
+// Keep the CONTRACT default in blocks/Dockerfile equal to it.
+//
+//   - v0.2.0: chaos.clear, config.reset, /metrics?window_ms=
+const Contract = "v0.2.0"
+
 const (
 	HeaderSaga     = "X-Symphony-Saga"
 	HeaderEdge     = "X-Symphony-Edge"

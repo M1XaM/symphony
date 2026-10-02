@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"symphony/blocks/common/wire"
 )
 
 var bins = map[string]string{}
@@ -425,3 +427,15 @@ func TestChoreography(t *testing.T) {
 }
 
 func must(m map[string]any, _ error) map[string]any { return m }
+
+// The image label the engine compares with wire.Contract comes from the
+// Dockerfile's default when the images are built with `make blocks`.
+func TestDockerfileContractMatches(t *testing.T) {
+	b, err := os.ReadFile("Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "ARG CONTRACT=" + wire.Contract + "\n"; !bytes.Contains(b, []byte(want)) {
+		t.Fatalf("blocks/Dockerfile does not say %q", want)
+	}
+}

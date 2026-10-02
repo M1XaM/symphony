@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -20,7 +19,6 @@ import (
 	"symphony/blocks/common/behaviour"
 	"symphony/blocks/common/control"
 	"symphony/blocks/common/health"
-	"symphony/blocks/common/links"
 	"symphony/blocks/common/metrics"
 	"symphony/blocks/common/server"
 	"symphony/blocks/common/wire"
@@ -106,12 +104,12 @@ func main() {
 		})
 	}
 
-	b.Control.Handle("behaviour.get", func(cmd control.Command) (any, error) {
+	b.Control.Handle(control.OpBehaviourGet, func(cmd control.Command) (any, error) {
 		s.progMu.RLock()
 		defer s.progMu.RUnlock()
 		return map[string]any{"source": s.source, "program": s.program}, nil
 	})
-	b.Control.Handle("behaviour.set", func(cmd control.Command) (any, error) {
+	b.Control.Handle(control.OpBehaviourSet, func(cmd control.Command) (any, error) {
 		raw, err := json.Marshal(cmd.Params)
 		if err != nil {
 			return nil, err
@@ -126,7 +124,7 @@ func main() {
 		b.Events.Publish("behaviour.set", map[string]any{"handlers": len(p.Handlers)})
 		return map[string]any{"handlers": len(p.Handlers)}, nil
 	})
-	b.Control.Handle("behaviour.reset", func(cmd control.Command) (any, error) {
+	b.Control.Handle(control.OpBehaviourReset, func(cmd control.Command) (any, error) {
 		s.progMu.Lock()
 		s.program, s.source = behaviour.Default(b.Links), "default"
 		s.progMu.Unlock()
@@ -149,9 +147,9 @@ func main() {
 			return b.Config.All(), nil
 		})
 	}
-	alias("pool.set", "workers", "queue", "queue_timeout_ms")
-	alias("work.set", "cpu_ms", "io_ms")
-	alias("breaker.set", "breaker_threshold", "breaker_open_ms", "timeout_ms", "retry_max", "retry_backoff_ms")
+	alias(control.OpPoolSet, "workers", "queue", "queue_timeout_ms")
+	alias(control.OpWorkSet, "cpu_ms", "io_ms")
+	alias(control.OpBreakerSet, "breaker_threshold", "breaker_open_ms", "timeout_ms", "retry_max", "retry_backoff_ms")
 	b.OnReset(func() {
 		s.idemMu.Lock()
 		s.idem, s.idemQ = map[string]idemEntry{}, nil
@@ -186,18 +184,26 @@ func (s *service) resizePool(n int) {
 	s.poolMu.Unlock()
 }
 
-// acquire takes a worker or fails when the queue is full or the wait too long.
-func (s *service) acquire(ctx context.Context) error {
+// acquire takes a worker or fails when the queue is full or the wait too
+// long. It returns the release for that worker: a resize swaps the pool, and
+// a worker goes back to the pool it was taken from.
+func (s *service) acquire(ctx context.Context) (release func(), err error) {
 	s.poolMu.Lock()
 	pool := s.pool
 	s.poolMu.Unlock()
+	taken := func() func() {
+		s.busy.Add(1)
+		return func() {
+			<-pool
+			s.busy.Add(-1)
+		}
+	}
 	if int(s.waiting.Load()) >= s.b.Config.Int("queue", 64) {
-		return &server.Reject{Status: http.StatusServiceUnavailable, Msg: "overloaded: queue full", Cause: "overload"}
+		return nil, &server.Reject{Status: http.StatusServiceUnavailable, Msg: "overloaded: queue full", Cause: "overload"}
 	}
 	select {
 	case pool <- struct{}{}:
-		s.busy.Add(1)
-		return nil
+		return taken(), nil
 	default:
 	}
 	s.waiting.Add(1)
@@ -207,31 +213,20 @@ func (s *service) acquire(ctx context.Context) error {
 	defer t.Stop()
 	select {
 	case pool <- struct{}{}:
-		s.busy.Add(1)
-		return nil
+		return taken(), nil
 	case <-t.C:
-		return &server.Reject{Status: http.StatusServiceUnavailable, Msg: "overloaded: no worker within queue_timeout_ms", Cause: "overload"}
+		return nil, &server.Reject{Status: http.StatusServiceUnavailable, Msg: "overloaded: no worker within queue_timeout_ms", Cause: "overload"}
 	case <-ctx.Done():
-		return &server.Reject{Status: http.StatusGatewayTimeout, Msg: "caller gave up while queued", Cause: "deadline"}
+		return nil, &server.Reject{Status: http.StatusGatewayTimeout, Msg: "caller gave up while queued", Cause: "deadline"}
 	}
-}
-
-func (s *service) release() {
-	s.poolMu.Lock()
-	pool := s.pool
-	s.poolMu.Unlock()
-	select {
-	case <-pool:
-	default:
-	}
-	s.busy.Add(-1)
 }
 
 func (s *service) handle(in server.Inbound) (server.Reply, error) {
-	if err := s.acquire(in.Ctx); err != nil {
+	release, err := s.acquire(in.Ctx)
+	if err != nil {
 		return server.Reply{}, err
 	}
-	defer s.release()
+	defer release()
 
 	// Idempotency: a retry of the same saga step (the caller timed out, the
 	// network duplicated it) gets the original answer, not a second execution.
@@ -350,7 +345,7 @@ func (s *service) ReportOutcome(saga, outcome string) {
 	if gw == "" {
 		return
 	}
-	body, _ := json.Marshal(control.Command{Op: "saga.done", Params: map[string]any{"saga": saga, "outcome": outcome, "node": s.b.Node}})
+	body, _ := json.Marshal(control.SagaDone(saga, outcome, s.b.Node))
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -375,5 +370,3 @@ func (s *service) ReportOutcome(saga, outcome string) {
 }
 
 var _ behaviour.Env = (*service)(nil)
-var _ = errors.New
-var _ links.Link

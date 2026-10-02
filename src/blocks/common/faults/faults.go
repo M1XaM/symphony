@@ -28,6 +28,8 @@ const (
 	Reject    Kind = "reject"    // rate: refuse connections (database)
 )
 
+// Kinds is the one list of link fault kinds: the engine's spec.FaultKind
+// takes them from here.
 var Kinds = []Kind{Drop, Error, Latency, Timeout, Slow, Partition, Corrupt, Duplicate, Reorder, Reject}
 
 func (k Kind) Valid() bool {
@@ -66,6 +68,32 @@ func (t Target) matches(s Scope) bool {
 		return false
 	}
 	return true
+}
+
+// SplitScope separates the scope keys in a fault's parameters (edge,
+// direction, peer, topic, table) from the kind's own knobs: the first make
+// the Target, the rest are returned as a new map.
+func SplitScope(params map[string]any) (Target, map[string]any) {
+	var t Target
+	knobs := make(map[string]any, len(params))
+	for k, v := range params {
+		s, _ := v.(string)
+		switch k {
+		case "edge":
+			t.Edge = s
+		case "direction":
+			t.Direction = s
+		case "peer":
+			t.Peer = s
+		case "topic":
+			t.Topic = s
+		case "table":
+			t.Table = s
+		default:
+			knobs[k] = v
+		}
+	}
+	return t, knobs
 }
 
 // Scope is what a request looks like to the matcher.

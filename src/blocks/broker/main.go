@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"symphony/blocks/common/client"
 	"symphony/blocks/common/control"
 	"symphony/blocks/common/faults"
 	"symphony/blocks/common/health"
@@ -210,7 +211,7 @@ func main() {
 		})
 	}
 
-	b.Control.Handle("topic.create", func(cmd control.Command) (any, error) {
+	b.Control.Handle(control.OpTopicCreate, func(cmd control.Command) (any, error) {
 		name := cmd.String("topic", "")
 		if name == "" {
 			return nil, fmt.Errorf("%w: params.topic required", control.ErrBadRequest)
@@ -218,14 +219,14 @@ func main() {
 		br.ensureTopic(name, cmd.Int("partitions", b.Config.Int("num_partitions", 3)))
 		return br.topicsInfo(), nil
 	})
-	b.Control.Handle("topic.delete", func(cmd control.Command) (any, error) {
+	b.Control.Handle(control.OpTopicDelete, func(cmd control.Command) (any, error) {
 		name := cmd.String("topic", "")
 		br.mu.Lock()
 		delete(br.topics, name)
 		br.mu.Unlock()
 		return br.topicsInfo(), nil
 	})
-	b.Control.Handle("topics.get", func(cmd control.Command) (any, error) { return br.topicsInfo(), nil })
+	b.Control.Handle(control.OpTopicsGet, func(cmd control.Command) (any, error) { return br.topicsInfo(), nil })
 	pause := func(paused bool) control.Handler {
 		return func(cmd control.Command) (any, error) {
 			edge := cmd.String("group", cmd.Target.Edge)
@@ -242,9 +243,9 @@ func main() {
 			return map[string]any{"group": edge, "paused": paused, "lag": g.lag()}, nil
 		}
 	}
-	b.Control.Handle("consumer.pause", pause(true))
-	b.Control.Handle("consumer.resume", pause(false))
-	b.Control.Handle("delivery.set", func(cmd control.Command) (any, error) {
+	b.Control.Handle(control.OpConsumerPause, pause(true))
+	b.Control.Handle(control.OpConsumerResume, pause(false))
+	b.Control.Handle(control.OpDeliverySet, func(cmd control.Command) (any, error) {
 		patch := map[string]any{}
 		for _, k := range []string{"delivery_delay_ms", "max_poll_records", "at_most_once"} {
 			if v, ok := cmd.Params[k]; ok {
@@ -356,6 +357,13 @@ func (br *broker) deliverLoop(ctx context.Context, g *group, pi int) {
 		return
 	}
 	backoff := 50 * time.Millisecond
+	commit := func(off int64) {
+		g.mu.Lock()
+		g.committed[pi] = off
+		g.mu.Unlock()
+	}
+	// the offset a reorder fault delivered ahead of its turn, -1 for none
+	ahead := int64(-1)
 	for ctx.Err() == nil {
 		g.mu.Lock()
 		paused := g.paused
@@ -365,51 +373,44 @@ func (br *broker) deliverLoop(ctx context.Context, g *group, pi int) {
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
+		if ahead >= 0 && ahead != next && ahead != next+1 {
+			ahead = -1 // the offsets moved under us (state.reset)
+		}
+		if ahead == next {
+			// already delivered, before the message in front of it
+			ahead = -1
+			commit(next + 1)
+			continue
+		}
 		m, have := p.at(next)
 		if !have {
 			if p.headOffset() > next {
 				// retention dropped it: skip forward and count it as lost
 				br.lost.Inc()
-				g.mu.Lock()
-				g.committed[pi] = next + 1
-				g.mu.Unlock()
+				commit(next + 1)
 				continue
 			}
 			time.Sleep(20 * time.Millisecond)
 			continue
 		}
-		// reorder fault: with a window, occasionally deliver the following
-		// message first (both still get delivered)
-		if fs := br.b.Faults.Matching(faults.Scope{Edge: g.edge.Edge, Direction: "out", Topic: g.topic.name}); len(fs) > 0 {
-			for _, f := range fs {
-				if f.Kind == faults.Reorder && br.b.Rand() < 0.5 {
-					if m2, ok2 := p.at(next + 1); ok2 {
-						m, m2 = m2, m
-						_ = m2
-					}
-				}
-			}
-		}
 		if d := br.b.Config.Duration("delivery_delay_ms", 0); d > 0 {
 			time.Sleep(d)
 		}
-		req := wire.Request{Saga: m.Saga, Step: m.Step, Payload: m.Payload, Trace: m.Trace}
-		res := c.Call(ctx, wire.Meta{Saga: m.Saga, Step: m.Step}, req)
-		switch {
-		case res.Err == nil:
-			br.out(g.topic.name, g.edge.Edge).Inc()
-			g.mu.Lock()
-			g.committed[pi] = next + 1
-			g.mu.Unlock()
+		// reorder fault: occasionally deliver the following message first.
+		// Both are still delivered: this one right after, and the following
+		// one is skipped when its turn comes.
+		if ahead < 0 && br.reorders(g) && br.b.Rand() < 0.5 {
+			if m2, ok2 := p.at(next + 1); ok2 && br.deliver(ctx, c, g, m2) != retry {
+				ahead = next + 1
+			}
+		}
+		switch br.deliver(ctx, c, g, m) {
+		case delivered:
+			commit(next + 1)
 			backoff = 50 * time.Millisecond
-		case res.Outcome == "dropped" || br.b.Config.Bool("at_most_once", false):
-			// the network ate it (drop fault) or delivery is at-most-once:
-			// move on, the message is lost
-			br.lost.Inc()
-			g.mu.Lock()
-			g.committed[pi] = next + 1
-			g.mu.Unlock()
-		default:
+		case lost:
+			commit(next + 1)
+		case retry:
 			br.redeliv.Inc()
 			time.Sleep(backoff)
 			if backoff < 2*time.Second {
@@ -418,6 +419,42 @@ func (br *broker) deliverLoop(ctx context.Context, g *group, pi int) {
 		}
 		br.lagGauge(g.topic.name, g.edge.Edge).Set(g.lag())
 	}
+}
+
+// reorders reports whether a reorder fault covers a group's deliveries.
+func (br *broker) reorders(g *group) bool {
+	for _, f := range br.b.Faults.Matching(faults.Scope{Edge: g.edge.Edge, Direction: "out", Topic: g.topic.name}) {
+		if f.Kind == faults.Reorder {
+			return true
+		}
+	}
+	return false
+}
+
+// delivery is what became of one attempt to push a message.
+type delivery int
+
+const (
+	delivered delivery = iota
+	lost               // dropped by the network, or at-most-once: not retried
+	retry
+)
+
+// deliver pushes one message to the group's subscriber.
+func (br *broker) deliver(ctx context.Context, c *client.Client, g *group, m message) delivery {
+	req := wire.Request{Saga: m.Saga, Step: m.Step, Payload: m.Payload, Trace: m.Trace}
+	res := c.Call(ctx, wire.Meta{Saga: m.Saga, Step: m.Step}, req)
+	switch {
+	case res.Err == nil:
+		br.out(g.topic.name, g.edge.Edge).Inc()
+		return delivered
+	case res.Outcome == client.OutcomeDropped || br.b.Config.Bool("at_most_once", false):
+		// the network ate it (drop fault) or delivery is at-most-once:
+		// move on, the message is lost
+		br.lost.Inc()
+		return lost
+	}
+	return retry
 }
 
 func (br *broker) retentionLoop() {

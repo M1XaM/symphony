@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"sync"
 	"time"
 )
@@ -20,11 +21,12 @@ type Config struct {
 	values   map[string]any
 	defined  map[string]any // key -> default
 	fromEnv  map[string]bool
+	env      map[string]any // what SYMPHONY_CONFIG said, for Reset
 	watchers []func(key string, value any)
 }
 
 func NewConfig() *Config {
-	return &Config{values: map[string]any{}, defined: map[string]any{}, fromEnv: map[string]bool{}}
+	return &Config{values: map[string]any{}, defined: map[string]any{}, fromEnv: map[string]bool{}, env: map[string]any{}}
 }
 
 // Define declares a key with its default. Environment values already loaded
@@ -64,11 +66,41 @@ func (c *Config) LoadEnv() error {
 	for k, v := range m {
 		c.values[k] = v
 		c.fromEnv[k] = true
+		c.env[k] = v
 	}
 	return nil
 }
 
-// Watch calls fn after every successful Set of any key.
+// Reset puts every key back to what the block started with (the
+// environment's value, else the default) and returns the keys it changed.
+// Watchers are told, as for a Set.
+func (c *Config) Reset() []string {
+	c.mu.Lock()
+	patch := map[string]any{}
+	for k, cur := range c.values {
+		start, ok := c.env[k]
+		if !ok {
+			start = c.defined[k]
+		}
+		if fmt.Sprint(cur) != fmt.Sprint(start) {
+			patch[k] = start
+			c.values[k] = start
+		}
+	}
+	ws := append([]func(string, any){}, c.watchers...)
+	c.mu.Unlock()
+	keys := make([]string, 0, len(patch))
+	for k, v := range patch {
+		keys = append(keys, k)
+		for _, w := range ws {
+			w(k, v)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// Watch calls fn with every key a Set or a Reset changes.
 func (c *Config) Watch(fn func(key string, value any)) {
 	c.mu.Lock()
 	c.watchers = append(c.watchers, fn)
@@ -89,13 +121,20 @@ func (c *Config) Set(patch map[string]any) error {
 			return fmt.Errorf("config: key %q expects %T, got %T", k, def, v)
 		}
 	}
+	// watchers hear of the keys that changed: setting a key to the value it
+	// has (the engine pushes a node's whole config to bring it back to its
+	// topology) must not, say, replace a worker pool that is in use
+	changed := map[string]any{}
 	for k, v := range patch {
+		if cur, ok := c.values[k]; !ok || fmt.Sprint(cur) != fmt.Sprint(v) {
+			changed[k] = v
+		}
 		c.values[k] = v
 	}
 	ws := append([]func(string, any){}, c.watchers...)
 	c.mu.Unlock()
 	for _, w := range ws {
-		for k, v := range patch {
+		for k, v := range changed {
 			w(k, v)
 		}
 	}

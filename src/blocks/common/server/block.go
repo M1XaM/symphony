@@ -35,7 +35,7 @@ import (
 )
 
 // Version of the blocks contract; reported in /health.
-const Version = "v0.1.0"
+const Version = wire.Contract
 
 // Default ports; SYMPHONY_DATA_PORT / SYMPHONY_ADMIN_PORT override them so
 // several blocks can share one host (tests, running blocks by hand).
@@ -44,7 +44,8 @@ const (
 	DefaultAdminPort = 9090
 )
 
-func dataPort() int  { return envInt("SYMPHONY_DATA_PORT", DefaultDataPort) }
+func dataPort() int { return envInt("SYMPHONY_DATA_PORT", DefaultDataPort) }
+
 func adminPort() int { return envInt("SYMPHONY_ADMIN_PORT", DefaultAdminPort) }
 
 // Block is everything a running block has.
@@ -71,11 +72,18 @@ type Block struct {
 
 	rngMu sync.Mutex
 	rng   *rand.Rand
-	outs  map[string]*client.Client
+	// one client per outbound edge; route.set replaces one while requests
+	// are being served, hence the lock
+	outsMu sync.RWMutex
+	outs   map[string]*client.Client
 	// InboundHandled counts requests per inbound edge for the "unknown link" check.
 	unknownLinks *metrics.Counter
 	ready        bool
 	readyMu      sync.Mutex
+	// the context CPU burns run under; chaos.clear cancels it
+	burnMu   sync.Mutex
+	burnCtx  context.Context
+	burnStop context.CancelFunc
 }
 
 // New reads the environment and builds a block of the given kind. Flags:
@@ -158,26 +166,30 @@ func (b *Block) settings() client.Settings {
 
 // Out returns the client for an outbound edge.
 func (b *Block) Out(edge string) (*client.Client, bool) {
+	b.outsMu.RLock()
+	defer b.outsMu.RUnlock()
 	c, ok := b.outs[edge]
 	return c, ok
 }
 
-// ReplaceOut swaps the client of an outbound edge (route.set).
+// ReplaceOut swaps the client of an outbound edge for one with other
+// targets (route.set). Links keeps what the engine wired at the start;
+// targets.get says where each edge goes now.
 func (b *Block) ReplaceOut(l links.Link) error {
 	if len(l.Targets) == 0 {
 		return errors.New("no targets")
 	}
-	for i := range b.Links.Out {
-		if b.Links.Out[i].Edge == l.Edge {
-			b.Links.Out[i] = l
-		}
-	}
-	b.outs[l.Edge] = client.New(b.Node, l, b.settings, b.Faults, b.Metrics, b.HTTP)
+	c := client.New(b.Node, l, b.settings, b.Faults, b.Metrics, b.HTTP)
+	b.outsMu.Lock()
+	b.outs[l.Edge] = c
+	b.outsMu.Unlock()
 	return nil
 }
 
 // Outs returns every outbound client, in link order.
 func (b *Block) Outs() []*client.Client {
+	b.outsMu.RLock()
+	defer b.outsMu.RUnlock()
 	out := make([]*client.Client, 0, len(b.Links.Out))
 	for _, l := range b.Links.Out {
 		out = append(out, b.outs[l.Edge])
@@ -200,336 +212,6 @@ func (b *Block) SetReady(ready bool) {
 	b.readyMu.Unlock()
 }
 
-// Inbound is what an inbound handler receives.
-type Inbound struct {
-	Link    links.Link
-	Meta    wire.Meta
-	Request wire.Request
-	Ctx     context.Context
-}
-
-// Reply is what a handler answers: a result and, when this node decides a
-// saga's fate, the outcome (ok | failed | compensated | pending).
-type Reply struct {
-	Result  json.RawMessage
-	Outcome string
-}
-
-// Handler processes one inbound request and returns the reply or an error.
-// A returned *Reject is answered with its status; any other error is 500.
-type Handler func(in Inbound) (Reply, error)
-
-// Reject is an error with an HTTP status and a cause. Outcome, when set,
-// still tells the caller how the saga ended (e.g. compensated).
-type Reject struct {
-	Status  int
-	Msg     string
-	Cause   string
-	Outcome string
-}
-
-func (r *Reject) Error() string { return r.Msg }
-
-// HandleIn registers the data-path endpoint for an inbound edge, wrapped in
-// the common middleware: stall gate, inbound faults, envelope, metrics.
-func (b *Block) HandleIn(link links.Link, h Handler) {
-	total := b.Metrics.Counter("link_requests_total", metrics.Labels{"edge": link.Edge, "dir": "in"})
-	hist := b.Metrics.Histogram("link_latency_ms", metrics.Labels{"edge": link.Edge, "dir": "in"})
-	recent := b.Metrics.Window("link_recent", metrics.Labels{"edge": link.Edge, "dir": "in"})
-	result := func(r string) *metrics.Counter {
-		recent.Record(r == "ok")
-		return b.Metrics.Counter("link_results_total", metrics.Labels{"edge": link.Edge, "dir": "in", "result": r})
-	}
-	peer := link.Peer(b.Node)
-	b.Data.HandleFunc("POST /in/"+link.Edge, func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		total.Inc()
-		meta := wire.ReadMeta(r.Header)
-		scope := faults.Scope{Edge: link.Edge, Direction: "in", Peer: peer, Topic: link.Topic}
-		b.rngMu.Lock()
-		d := b.Faults.Decide(scope, b.rng)
-		b.rngMu.Unlock()
-
-		fail := func(status int, msg, cause, res, outcome string) {
-			result(res).Inc()
-			hist.Observe(msSince(start))
-			writeResponse(w, status, wire.Response{Saga: meta.Saga, Node: b.Node, Edge: link.Edge, Error: msg, Cause: cause, Outcome: outcome})
-		}
-		switch {
-		case d.Partitioned, d.Rejected, d.Dropped:
-			// close without answering: to the caller this is a reset
-			result("dropped").Inc()
-			hist.Observe(msSince(start))
-			if hj, ok := w.(http.Hijacker); ok {
-				if conn, _, err := hj.Hijack(); err == nil {
-					conn.Close()
-					return
-				}
-			}
-			w.WriteHeader(http.StatusBadGateway)
-			return
-		case d.Hang:
-			result("timeout").Inc()
-			<-r.Context().Done()
-			return
-		case d.ErrorStatus != 0:
-			fail(d.ErrorStatus, "injected error", d.Cause, "fault", "")
-			return
-		}
-		if d.Delay > 0 {
-			select {
-			case <-time.After(d.Delay):
-			case <-r.Context().Done():
-				result("timeout").Inc()
-				return
-			}
-		}
-		if err := b.Gate.Wait(r.Context()); err != nil {
-			result("timeout").Inc()
-			return
-		}
-		if !meta.Deadline.IsZero() && time.Now().After(meta.Deadline) {
-			fail(http.StatusGatewayTimeout, "caller deadline already passed", "deadline", "timeout", "")
-			return
-		}
-
-		var req wire.Request
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-			fail(http.StatusBadRequest, "bad envelope: "+err.Error(), "envelope", "error", "")
-			return
-		}
-		if req.Saga == "" {
-			req.Saga = meta.Saga
-		}
-		if meta.Saga == "" {
-			meta.Saga = req.Saga
-		}
-		req.Trace = append(req.Trace, wire.Hop{Node: b.Node, Edge: link.Edge, Ts: time.Now().UnixMilli()})
-
-		ctx := r.Context()
-		if !meta.Deadline.IsZero() {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithDeadline(ctx, meta.Deadline)
-			defer cancel()
-		}
-		reply, err := h(Inbound{Link: link, Meta: meta, Request: req, Ctx: ctx})
-		if err != nil {
-			var rj *Reject
-			if errors.As(err, &rj) {
-				res := "error"
-				if rj.Status == http.StatusGatewayTimeout {
-					res = "timeout"
-				}
-				fail(rj.Status, rj.Msg, rj.Cause, res, rj.Outcome)
-				return
-			}
-			fail(http.StatusInternalServerError, err.Error(), "handler", "error", "")
-			return
-		}
-		result("ok").Inc()
-		hist.Observe(msSince(start))
-		resp := wire.Response{Saga: req.Saga, Node: b.Node, Result: reply.Result, Trace: req.Trace, Outcome: reply.Outcome}
-		if d.Corrupt {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			_, _ = io.WriteString(w, `{"saga":"`+req.Saga+`","node":"`+b.Node+`","error":"corrupted","cause":"fault:corrupt","result":{"garb`)
-			return
-		}
-		if d.BytesPerSec > 0 {
-			body, _ := json.Marshal(resp)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			trickle(w, r.Context(), body, d.BytesPerSec)
-			return
-		}
-		writeResponse(w, http.StatusOK, resp)
-	})
-	b.Health.Register("link:"+link.Edge+":in", b.linkCheck(link.Edge, "in"))
-}
-
-// trickle writes body at roughly bytesPerSec.
-func trickle(w http.ResponseWriter, ctx context.Context, body []byte, bps int) {
-	fl, _ := w.(http.Flusher)
-	chunk := max(bps/10, 1)
-	for off := 0; off < len(body); off += chunk {
-		end := min(off+chunk, len(body))
-		if _, err := w.Write(body[off:end]); err != nil {
-			return
-		}
-		if fl != nil {
-			fl.Flush()
-		}
-		select {
-		case <-time.After(100 * time.Millisecond):
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-func writeResponse(w http.ResponseWriter, status int, resp wire.Response) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(resp)
-}
-
-func msSince(t time.Time) float64 { return float64(time.Since(t).Microseconds()) / 1000 }
-
-// linkCheck derives a health check from a link's recent results (the last
-// 64 requests), so a link that broke a moment ago shows up even after an
-// hour of good traffic, and one that recovered clears quickly.
-func (b *Block) linkCheck(edge, dir string) health.Func {
-	return func() health.Check {
-		total := b.Metrics.Counter("link_requests_total", metrics.Labels{"edge": edge, "dir": dir}).Value()
-		okc := b.Metrics.Counter("link_results_total", metrics.Labels{"edge": edge, "dir": dir, "result": "ok"}).Value()
-		rate, n := b.Metrics.Window("link_recent", metrics.Labels{"edge": edge, "dir": dir}).Rate()
-		detail := map[string]any{"requests": total, "ok": okc, "recent_error_rate": float64(int(rate*1000)) / 1000, "recent_n": n}
-		c := health.Check{Status: health.Healthy, Detail: detail}
-		if n >= 5 {
-			switch {
-			case rate >= b.Config.Float("health.link_fail_rate", 0.5):
-				c.Status = health.Failing
-			case rate >= b.Config.Float("health.link_warn_rate", 0.05):
-				c.Status = health.Degraded
-			}
-		}
-		if dir == "out" {
-			if cl, ok := b.outs[edge]; ok {
-				detail["targets"] = len(cl.Link.Targets)
-				detail["targets_up"] = cl.TargetsUp()
-				if cl.TargetsUp() == 0 {
-					c.Status = health.Failing
-					detail["cause"] = "every target's breaker is open"
-				}
-			}
-		}
-		return c
-	}
-}
-
-// registerCommon adds the checks and control ops every block has.
-func (b *Block) registerCommon() {
-	b.Health.Register("ready", func() health.Check {
-		b.readyMu.Lock()
-		defer b.readyMu.Unlock()
-		if !b.ready {
-			return health.Check{Status: health.Failing, Detail: map[string]any{"reason": "handlers not installed yet"}}
-		}
-		return health.Check{Status: health.Healthy}
-	})
-	b.Health.Register("faults", func() health.Check {
-		list := b.Faults.List()
-		c := health.Check{Status: health.Healthy, Detail: map[string]any{"active": len(list)}}
-		if len(list) > 0 {
-			c.Status = health.Degraded
-			items := make([]map[string]any, 0, len(list))
-			for _, f := range list {
-				items = append(items, map[string]any{"id": f.ID, "kind": f.Kind, "target": f.Target, "params": f.Params, "remaining_ms": f.RemainingMs()})
-				if f.Kind == faults.Partition || f.Kind == faults.Timeout {
-					c.Status = health.Worst(c.Status, health.Failing)
-				}
-			}
-			c.Detail["items"] = items
-		}
-		return c
-	})
-	b.Health.Register("chaos", func() health.Check {
-		c := health.Check{Status: health.Healthy, Detail: map[string]any{"held_mb": b.Memory.HeldMB()}}
-		if s := b.Gate.Stalled(); s > 0 {
-			c.Status = health.Failing
-			c.Detail["stalled_ms"] = s.Milliseconds()
-		}
-		return c
-	})
-	b.Health.Register("memory", func() health.Check {
-		ms := readMem()
-		return health.Check{Status: health.Healthy, Detail: ms}
-	})
-	b.Health.Register("links", func() health.Check {
-		unknown := b.unknownLinks.Value()
-		c := health.Check{Status: health.Healthy, Detail: map[string]any{"in": len(b.Links.In), "out": len(b.Links.Out), "unknown_requests": unknown}}
-		if unknown > 0 {
-			c.Status = health.Degraded
-			c.Detail["cause"] = "requests arrived for edges this node does not have"
-		}
-		return c
-	})
-	for _, l := range b.Links.Out {
-		b.Health.Register("link:"+l.Edge+":out", b.linkCheck(l.Edge, "out"))
-	}
-
-	b.Control.Handle("chaos.cpu", func(cmd control.Command) (any, error) {
-		cores := cmd.Float("cores", 1)
-		d := cmd.Duration()
-		if d <= 0 {
-			d = 10 * time.Second
-		}
-		chaos.Burn(context.Background(), cores, d)
-		b.Events.Publish("chaos.cpu", cmd.Params)
-		return map[string]any{"cores": cores, "duration_ms": d.Milliseconds()}, nil
-	})
-	b.Control.Handle("chaos.memory", func(cmd control.Command) (any, error) {
-		mb := cmd.Int("mb", 100)
-		b.Memory.Hold(mb, cmd.Duration())
-		b.Events.Publish("chaos.memory", cmd.Params)
-		return map[string]any{"held_mb": b.Memory.HeldMB()}, nil
-	})
-	b.Control.Handle("chaos.stall", func(cmd control.Command) (any, error) {
-		d := cmd.Duration()
-		if d <= 0 {
-			d = 5 * time.Second
-		}
-		b.Gate.Stall(d)
-		b.Events.Publish("chaos.stall", map[string]any{"duration_ms": d.Milliseconds()})
-		return map[string]any{"stalled_ms": d.Milliseconds()}, nil
-	})
-	b.Control.Handle("chaos.resume", func(cmd control.Command) (any, error) {
-		b.Gate.Open()
-		return map[string]any{"stalled_ms": 0}, nil
-	})
-	b.Control.Handle("chaos.crash", func(cmd control.Command) (any, error) {
-		code := cmd.Int("exit_code", 137)
-		b.Log.Error("crashing on request", "exit_code", code)
-		chaos.Crash(code)
-		return map[string]any{"exit_code": code}, nil
-	})
-	b.Control.Handle("log.level", func(cmd control.Command) (any, error) {
-		lv := cmd.String("level", "")
-		if err := b.Logs.SetLevel(lv); err != nil {
-			return nil, fmt.Errorf("%w: %v", control.ErrBadRequest, err)
-		}
-		return map[string]any{"level": b.Logs.Level()}, nil
-	})
-	b.Control.Handle("links.get", func(cmd control.Command) (any, error) { return b.Links, nil })
-	b.Control.Handle("targets.get", func(cmd control.Command) (any, error) {
-		out := map[string]any{}
-		for edge, c := range b.outs {
-			out[edge] = c.TargetStates()
-		}
-		return out, nil
-	})
-	prevReset := b.Control.Reset
-	b.Control.Reset = func() {
-		b.Metrics.Reset()
-		b.Memory.Release(1 << 30)
-		b.Gate.Open()
-		if prevReset != nil {
-			prevReset()
-		}
-	}
-}
-
-// OnReset chains a block-specific reset behind the common one.
-func (b *Block) OnReset(fn func()) {
-	prev := b.Control.Reset
-	b.Control.Reset = func() {
-		if prev != nil {
-			prev()
-		}
-		fn()
-	}
-}
-
 // Run installs the admin routes and serves both ports until SIGTERM.
 func (b *Block) Run() error {
 	b.Admin.HandleFunc("GET /health", b.Health.Handler())
@@ -541,7 +223,9 @@ func (b *Block) Run() error {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(b.Metrics.Snapshot(time.Now().UnixMilli()))
+		// ?window_ms= is how far back the percentiles look
+		window, _ := strconv.Atoi(r.URL.Query().Get("window_ms"))
+		_ = json.NewEncoder(w).Encode(b.Metrics.SnapshotWindow(time.Now().UnixMilli(), time.Duration(window)*time.Millisecond))
 	})
 	b.Admin.HandleFunc("GET /logs", b.Logs.Handler())
 	b.Admin.HandleFunc("GET /events", b.Events.Handler())

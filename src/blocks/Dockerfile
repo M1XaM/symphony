@@ -13,7 +13,12 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/block ./blocks/${BLOCK}
 
 FROM gcr.io/distroless/static:nonroot
 ARG BLOCK
-LABEL symphony.block="${BLOCK}" symphony.contract="v0.1.0"
+# the contract the block speaks (blocks/common/wire.Contract)
+ARG CONTRACT=v0.2.0
+# digest of the sources, set when the app builds the image itself; empty for
+# an image built by hand, which the app then never replaces on its own
+ARG SOURCE=
+LABEL symphony.block="${BLOCK}" symphony.contract="${CONTRACT}" symphony.source="${SOURCE}"
 COPY --from=build /out/block /block
 EXPOSE 8080 9090
 USER nonroot:nonroot

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -106,22 +107,30 @@ func (r *Router) Ops() []string {
 
 // Execute runs a command.
 func (r *Router) Execute(cmd Command) Result {
+	res, _ := r.execute(cmd)
+	return res
+}
+
+// execute runs a command and also returns the handler's error as it was,
+// so the HTTP layer can tell a client mistake from a failure.
+func (r *Router) execute(cmd Command) (Result, error) {
 	r.mu.RLock()
 	h, ok := r.handlers[cmd.Op]
 	r.mu.RUnlock()
 	res := Result{ID: cmd.ID, Op: cmd.Op}
 	if !ok {
-		res.Error = fmt.Sprintf("%v: unknown op %q", ErrBadRequest, cmd.Op)
-		return res
+		err := fmt.Errorf("%w: unknown op %q", ErrBadRequest, cmd.Op)
+		res.Error = err.Error()
+		return res, err
 	}
 	state, err := h(cmd)
 	if err != nil {
 		res.Error = err.Error()
-		return res
+		return res, err
 	}
 	res.OK = true
 	res.State = state
-	return res
+	return res, nil
 }
 
 // HTTPHandler serves POST /control.
@@ -136,11 +145,11 @@ func (r *Router) HTTPHandler() http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, Result{OK: false, Error: "decode: " + err.Error()})
 			return
 		}
-		res := r.Execute(cmd)
+		res, err := r.execute(cmd)
 		status := http.StatusOK
-		if !res.OK {
+		if err != nil {
 			status = http.StatusInternalServerError
-			if errors.Is(errFrom(res.Error), ErrBadRequest) || isBad(res.Error) {
+			if errors.Is(err, ErrBadRequest) || isBad(err.Error()) {
 				status = http.StatusBadRequest
 			}
 		}
@@ -148,28 +157,16 @@ func (r *Router) HTTPHandler() http.HandlerFunc {
 	}
 }
 
-func errFrom(s string) error { return errors.New(s) }
-
+// isBad recognises the client mistakes that handlers report without
+// wrapping ErrBadRequest (the config and fault stores have their own
+// errors).
 func isBad(msg string) bool {
-	for _, p := range []string{"bad request", "unknown key", "unknown kind", "expects", "must be", "required", "unknown op"} {
-		if contains(msg, p) {
+	for _, p := range []string{"unknown key", "unknown kind", "expects", "must be", "required"} {
+		if strings.Contains(msg, p) {
 			return true
 		}
 	}
 	return false
-}
-
-func contains(s, sub string) bool {
-	return len(sub) <= len(s) && (s == sub || indexOf(s, sub) >= 0)
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -180,10 +177,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 // registerCommon wires the operations every block has.
 func (r *Router) registerCommon() {
-	r.Handle("config.get", func(cmd Command) (any, error) {
+	r.Handle(OpConfigGet, func(cmd Command) (any, error) {
 		return r.Config.All(), nil
 	})
-	r.Handle("config.set", func(cmd Command) (any, error) {
+	r.Handle(OpConfigSet, func(cmd Command) (any, error) {
 		if len(cmd.Params) == 0 {
 			return nil, fmt.Errorf("%w: params required", ErrBadRequest)
 		}
@@ -193,7 +190,13 @@ func (r *Router) registerCommon() {
 		r.Events.Publish("config.set", cmd.Params)
 		return r.Config.All(), nil
 	})
-	r.Handle("fault.set", func(cmd Command) (any, error) {
+	// config.reset undoes every config.set since the block started
+	r.Handle(OpConfigReset, func(cmd Command) (any, error) {
+		keys := r.Config.Reset()
+		r.Events.Publish("config.reset", map[string]any{"keys": keys})
+		return r.Config.All(), nil
+	})
+	r.Handle(OpFaultSet, func(cmd Command) (any, error) {
 		kind := faults.Kind(cmd.String("kind", ""))
 		if kind == "" {
 			return nil, fmt.Errorf("%w: params.kind required", ErrBadRequest)
@@ -210,7 +213,7 @@ func (r *Router) registerCommon() {
 		}
 		return f, nil
 	})
-	r.Handle("fault.clear", func(cmd Command) (any, error) {
+	r.Handle(OpFaultClear, func(cmd Command) (any, error) {
 		if all, _ := cmd.Params["all"].(bool); all {
 			return map[string]any{"cleared": r.Faults.ClearAll()}, nil
 		}
@@ -223,7 +226,7 @@ func (r *Router) registerCommon() {
 		}
 		return map[string]any{"cleared": 1}, nil
 	})
-	r.Handle("fault.list", func(cmd Command) (any, error) {
+	r.Handle(OpFaultList, func(cmd Command) (any, error) {
 		list := r.Faults.List()
 		out := make([]map[string]any, 0, len(list))
 		for _, f := range list {
@@ -231,7 +234,7 @@ func (r *Router) registerCommon() {
 		}
 		return out, nil
 	})
-	r.Handle("state.reset", func(cmd Command) (any, error) {
+	r.Handle(OpStateReset, func(cmd Command) (any, error) {
 		n := r.Faults.ClearAll()
 		if r.Reset != nil {
 			r.Reset()
@@ -239,5 +242,5 @@ func (r *Router) registerCommon() {
 		r.Events.Publish("state.reset", nil)
 		return map[string]any{"faults_cleared": n}, nil
 	})
-	r.Handle("ops", func(cmd Command) (any, error) { return r.Ops(), nil })
+	r.Handle(OpOps, func(cmd Command) (any, error) { return r.Ops(), nil })
 }

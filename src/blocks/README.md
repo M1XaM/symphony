@@ -30,8 +30,8 @@ Every block:
   failing`); `?strict=1` turns a non-healthy status into 503 for the container
   HEALTHCHECK;
 - accepts `/control` commands `{id, op, target, params, duration_ms}` with the
-  common ops `config.get/set`, `fault.set/clear/list`, `chaos.cpu/memory/
-  stall/resume/crash`, `state.reset`, `log.level`, `links.get`, `targets.get`,
+  common ops `config.get/set/reset`, `fault.set/clear/list`, `chaos.cpu/memory/
+  stall/resume/clear/crash`, `state.reset`, `log.level`, `links.get`, `targets.get`,
   `ops`, plus its own (see each `main.go`).
 
 Fault kinds (`fault.set params.kind`): `drop`, `error`, `latency`, `timeout`,

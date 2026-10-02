@@ -13,7 +13,6 @@ import (
 	"math"
 	"net/http"
 	"sort"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,6 +33,8 @@ type saga struct {
 	LatMs   float64    `json:"latency_ms"`
 	Trace   []wire.Hop `json:"trace,omitempty"`
 	Source  string     `json:"source"` // load | ingress
+	// evicted: no longer in the recent list, so it is forgotten once done
+	evicted bool
 }
 
 type loadSpec struct {
@@ -125,14 +126,14 @@ func main() {
 		})
 	}
 
-	b.Control.Handle("load.set", g.loadSet)
-	b.Control.Handle("load.stop", func(cmd control.Command) (any, error) {
+	b.Control.Handle(control.OpLoadSet, g.loadSet)
+	b.Control.Handle(control.OpLoadStop, func(cmd control.Command) (any, error) {
 		g.stopLoad()
 		return g.loadStatus(), nil
 	})
-	b.Control.Handle("load.status", func(cmd control.Command) (any, error) { return g.loadStatus(), nil })
-	b.Control.Handle("saga.done", g.sagaDone)
-	b.Control.Handle("sagas.recent", func(cmd control.Command) (any, error) {
+	b.Control.Handle(control.OpLoadStatus, func(cmd control.Command) (any, error) { return g.loadStatus(), nil })
+	b.Control.Handle(control.OpSagaDone, g.sagaDone)
+	b.Control.Handle(control.OpSagasRecent, func(cmd control.Command) (any, error) {
 		n := cmd.Int("n", 20)
 		g.mu.Lock()
 		defer g.mu.Unlock()
@@ -144,7 +145,7 @@ func main() {
 		}
 		return out, nil
 	})
-	b.Control.Handle("sagas.summary", func(cmd control.Command) (any, error) { return g.summary(), nil })
+	b.Control.Handle(control.OpSagasSummary, func(cmd control.Command) (any, error) { return g.summary(), nil })
 
 	b.Health.Register("generator", func() health.Check {
 		st := g.loadStatus()
@@ -217,8 +218,14 @@ func (g *gateway) newSaga(source string) *saga {
 	if len(g.recent) > recentCap {
 		old := g.recent[0]
 		g.recent = g.recent[1:]
-		if os := g.sagas[old]; os != nil && os.Done {
-			delete(g.sagas, old)
+		// a saga still on its way stays tracked until its outcome (or its
+		// timeout) arrives; finish forgets it then
+		if os := g.sagas[old]; os != nil {
+			if os.Done {
+				delete(g.sagas, old)
+			} else {
+				os.evicted = true
+			}
 		}
 	}
 	g.mu.Unlock()
@@ -229,7 +236,9 @@ func (g *gateway) newSaga(source string) *saga {
 
 func (g *gateway) finish(s *saga, outcome string, trace []wire.Hop) {
 	g.mu.Lock()
-	if s.Done {
+	// a saga a state.reset forgot while it was on its way is not part of
+	// what is measured now
+	if s.Done || g.sagas[s.ID] != s {
 		g.mu.Unlock()
 		return
 	}
@@ -238,6 +247,9 @@ func (g *gateway) finish(s *saga, outcome string, trace []wire.Hop) {
 	s.LatMs = float64(time.Since(s.Start).Microseconds()) / 1000
 	if trace != nil {
 		s.Trace = trace
+	}
+	if s.evicted {
+		delete(g.sagas, s.ID)
 	}
 	g.mu.Unlock()
 	g.pending.Add(-1)
@@ -400,10 +412,9 @@ func (g *gateway) summary() map[string]any {
 // --- load generator ---------------------------------------------------------
 
 func (g *gateway) loadSet(cmd control.Command) (any, error) {
-	raw, _ := json.Marshal(cmd.Params)
 	var spec loadSpec
-	if err := json.Unmarshal(raw, &spec); err != nil {
-		return nil, fmt.Errorf("%w: %v", control.ErrBadRequest, err)
+	if err := cmd.Bind(&spec); err != nil {
+		return nil, err
 	}
 	if spec.Pattern == "" {
 		spec.Pattern = "constant"
@@ -554,5 +565,3 @@ func (g *gateway) loadStatus() map[string]any {
 	}
 	return st
 }
-
-var _ = strconv.Itoa

@@ -14,9 +14,7 @@ import (
 	"symphony/blocks/common/client"
 	"symphony/blocks/common/control"
 	"symphony/blocks/common/health"
-	"symphony/blocks/common/links"
 	"symphony/blocks/common/server"
-	"symphony/blocks/common/wire"
 )
 
 func main() {
@@ -88,8 +86,8 @@ func main() {
 		})
 	}
 
-	b.Control.Handle("pairs.get", func(cmd control.Command) (any, error) { return pairs, nil })
-	b.Control.Handle("route.set", func(cmd control.Command) (any, error) {
+	b.Control.Handle(control.OpPairsGet, func(cmd control.Command) (any, error) { return pairs, nil })
+	b.Control.Handle(control.OpRouteSet, func(cmd control.Command) (any, error) {
 		// re-point an outbound edge at different targets at runtime
 		edge := cmd.String("edge", cmd.Target.Edge)
 		raw, _ := cmd.Params["targets"].([]any)
@@ -125,6 +123,3 @@ type passthrough struct {
 	Result   json.RawMessage `json:"result,omitempty"`
 	Upstream string          `json:"upstream"`
 }
-
-var _ links.Link
-var _ wire.Meta
