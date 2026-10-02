@@ -59,7 +59,7 @@ func New(opts Options) (*Backend, error) {
 	if dir, err := os.UserConfigDir(); err == nil {
 		configDir = filepath.Join(dir, "symphony")
 	} else {
-		b.Bus.Log("warn", "app", err.Error()+" — templates and test runs will not persist")
+		b.Bus.Log("warn", "app", err.Error()+" — saved templates will not persist")
 	}
 	b.Store = openStore(b.Bus, opts.DBPath, configDir)
 	owner, err := b.Store.InstanceID()
@@ -74,7 +74,7 @@ func New(opts Options) (*Backend, error) {
 	b.Engine = core.New(core.Options{Runtime: b.Docker, Bus: b.Bus, Images: images.NewEnsurer(opts.Blocks), Store: b.Store, FollowStore: opts.FollowStore})
 	b.Metrics = metrics.NewCollector(b.Bus, 500*time.Millisecond, b.Engine)
 	b.Host = hoststats.New(b.Bus, time.Second)
-	b.Tests = tests.NewRunner(b.Engine, b.Bus, configDir)
+	b.Tests = tests.NewRunner(b.Engine, b.Bus, b.Store)
 	b.Logs = logstream.New(b.Docker, b.Bus)
 	libPath := ""
 	if configDir != "" {
@@ -170,6 +170,14 @@ func openStore(bus *events.Bus, path, configDir string) *store.Store {
 		bus.Log("warn", "store", "importing the old deployment records: "+err.Error())
 	} else if n > 0 {
 		bus.Log("info", "store", fmt.Sprintf("imported %d deployment(s) from %s", n, configDir))
+	}
+	if configDir != "" {
+		runs := filepath.Join(configDir, "runs")
+		if n, err := st.ImportRuns(runs); err != nil {
+			bus.Log("warn", "store", "importing the old test runs: "+err.Error())
+		} else if n > 0 {
+			bus.Log("info", "store", fmt.Sprintf("imported %d test run(s) from %s", n, runs))
+		}
 	}
 	return st
 }
