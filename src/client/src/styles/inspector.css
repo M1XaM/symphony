@@ -1,0 +1,116 @@
+/* --- inspector ------------------------------------------------------------ */
+
+.inspector {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.inspector-main {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 10px;
+}
+
+.kind-chip {
+  padding: 1px 6px;
+  border-radius: 2px;
+  color: #fff;
+  font-size: 10px;
+}
+
+.kind-chip.kind-service {
+  background: var(--kind-service);
+}
+.kind-chip.kind-broker {
+  background: var(--kind-broker);
+}
+.kind-chip.kind-db {
+  background: var(--kind-db);
+}
+.kind-chip.kind-proxy {
+  background: var(--kind-proxy);
+}
+.kind-chip.kind-infra {
+  background: var(--kind-infra);
+}
+
+.field {
+  padding: 4px 10px;
+}
+
+.field-label {
+  display: flex;
+  align-items: center;
+  margin-bottom: 3px;
+  font-size: 11.5px;
+  color: var(--fg-muted);
+}
+
+.field-static {
+  padding: 3px 0;
+}
+
+.field-num {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fault-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 0 10px;
+}
+
+.inspector-actions {
+  padding: 14px 10px 0;
+}
+
+/* run summary */
+.summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 10px;
+  font-size: 12.5px;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 8px 10px;
+}
+
+.tile {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+
+.tile-label {
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.tile-value {
+  margin-top: 2px;
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile-unit {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--fg-muted);
+}
+
+.summary .small {
+  padding: 0 10px;
+}

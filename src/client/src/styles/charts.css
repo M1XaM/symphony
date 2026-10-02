@@ -1,0 +1,109 @@
+/* stats tab: one chart per host resource */
+.stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 4px 10px 8px;
+}
+
+@media (max-width: 900px) {
+  .stats {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* chart */
+.chart {
+  --series: var(--accent);
+  padding: 0 10px;
+  min-width: 0;
+}
+
+.chart .series-1 {
+  --series: #4f8cff;
+}
+
+.chart .series-2 {
+  --series: #cc7f2b;
+}
+
+.chart-series {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 10px;
+}
+
+.chart-swatch {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--series);
+}
+
+.chart-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.chart-head .pane-title {
+  padding-left: 0;
+}
+
+.chart-readout {
+  font-size: 12px;
+}
+
+.chart-value {
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-svg {
+  display: block;
+  width: 100%;
+  height: 90px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+
+.chart-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.chart-line {
+  fill: none;
+  stroke: var(--series);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.chart-area {
+  fill: var(--series);
+  opacity: 0.08;
+}
+
+.chart-crosshair {
+  stroke: var(--fg-muted);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+
+.chart-marker {
+  fill: var(--bg-2);
+  stroke: var(--series);
+  stroke-width: 2;
+}
+
+.chart-foot {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 3px;
+  font-size: 10.5px;
+  font-family: var(--mono);
+}

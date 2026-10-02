@@ -213,6 +213,7 @@ type FaultKind =
   | 'slow'
   | 'corrupt'
   | 'duplicate'
+  | 'reorder'
   | 'reject'
 
 export interface FaultSpec {

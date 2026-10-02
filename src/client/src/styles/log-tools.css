@@ -1,0 +1,19 @@
+/* log tab tools */
+.log-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.log-filter {
+  width: 140px;
+  font-size: 11.5px;
+}
+
+/* container lines carry their container name, which is wider than "engine" */
+.log-src {
+  width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

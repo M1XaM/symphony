@@ -1,0 +1,173 @@
+/* --- canvas --------------------------------------------------------------- */
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  /* the map is a world of its own: nothing inside it can force the panels to
+     lay out or repaint while it pans */
+  contain: layout paint;
+}
+
+/* While the map is being dragged or zoomed every frame repaints the pane, so
+   the live-edge dash and the colour transitions hold still until the gesture
+   ends. */
+.app.is-moving .react-flow__edge.tedge-live path.react-flow__edge-path {
+  animation: none;
+}
+
+.app.is-moving .react-flow__edge.tedge path.react-flow__edge-path,
+.app.is-moving .tnode {
+  transition: none;
+}
+
+/* the dot grid; Canvas keeps its offset and size in step with the viewport */
+.canvas-grid {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: radial-gradient(circle, var(--line) 0.5px, transparent 1px);
+  pointer-events: none;
+}
+
+.react-flow {
+  --xy-background-color: var(--bg);
+  --xy-edge-stroke: #4a4f5a;
+  --xy-edge-stroke-selected: var(--accent);
+  --xy-edge-stroke-width: 1.5;
+  --xy-edge-label-color: var(--fg-muted);
+  --xy-edge-label-background-color: var(--bg);
+  --xy-controls-button-background-color: var(--bg-2);
+  --xy-controls-button-background-color-hover: var(--bg-3);
+  --xy-controls-button-color: var(--fg-muted);
+  --xy-controls-button-border-color: var(--line);
+  --xy-handle-background-color: var(--fg-dim);
+  --xy-handle-border-color: var(--bg-1);
+  --xy-node-boxshadow-selected: none;
+  --xy-node-boxshadow-hover: none;
+}
+
+/* the zoom controls live in the corner the panels leave free */
+.react-flow .react-flow__controls {
+  margin: calc(var(--gap) * 2 + var(--toolbar-h) + 2px) 0 0 calc(var(--gap) * 2 + var(--panel-left-w));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--panel-bg);
+  box-shadow: var(--shadow);
+}
+
+.react-flow__edge-text {
+  font-family: var(--mono);
+  font-size: 10.5px;
+}
+
+/* every edge is grey until its topology runs; then the link's error rate
+   picks green / yellow / red (thresholds in engine/metrics) */
+.react-flow__edge.tedge path.react-flow__edge-path {
+  stroke: var(--grey);
+  transition: stroke 300ms ease;
+}
+
+.react-flow__edge.tedge-ok path.react-flow__edge-path {
+  stroke: var(--ok);
+}
+
+.react-flow__edge.tedge-warn path.react-flow__edge-path {
+  stroke: var(--warn);
+}
+
+.react-flow__edge.tedge-crit path.react-flow__edge-path {
+  stroke: var(--err);
+  stroke-width: 2;
+}
+
+.react-flow__edge.tedge-warn .react-flow__edge-text {
+  fill: var(--warn);
+}
+
+.react-flow__edge.tedge-crit .react-flow__edge-text {
+  fill: var(--err);
+}
+
+.react-flow__edge.tedge-via path.react-flow__edge-path {
+  stroke-dasharray: 5 3;
+}
+
+.react-flow__edge.selected path.react-flow__edge-path {
+  stroke: var(--accent);
+}
+
+/* custom node */
+.tnode {
+  width: 172px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  font-size: 12px;
+  transition: border-color 150ms ease;
+}
+
+.tnode.is-selected {
+  border-color: var(--accent);
+}
+
+.tnode-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 8px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--grey);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.tnode-service .tnode-head {
+  background: var(--kind-service);
+}
+.tnode-broker .tnode-head {
+  background: var(--kind-broker);
+}
+.tnode-db .tnode-head {
+  background: var(--kind-db);
+}
+.tnode-proxy .tnode-head {
+  background: var(--kind-proxy);
+}
+.tnode-infra .tnode-head {
+  background: var(--kind-infra);
+}
+
+.tnode-head .dot {
+  border: 1px solid rgba(0, 0, 0, 0.35);
+}
+
+.tnode-body {
+  padding: 5px 8px 6px;
+}
+
+.tnode-id {
+  font-family: var(--mono);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.tnode-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--fg-muted);
+}
+
+.tnode-msg {
+  color: var(--warn);
+}
+
+.tnode-handle {
+  width: 7px;
+  height: 7px;
+}

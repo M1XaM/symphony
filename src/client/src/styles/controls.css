@@ -1,0 +1,203 @@
+/* --- controls ------------------------------------------------------------- */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  color: var(--fg);
+  cursor: pointer;
+  line-height: 1.5;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--bg-3);
+  border-color: var(--fg-dim);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.btn-accent {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.btn-accent:hover:not(:disabled) {
+  background: #3f7ae6;
+  border-color: #3f7ae6;
+}
+
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--fg-muted);
+}
+
+.btn-danger {
+  color: var(--err);
+}
+
+.btn-small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.input {
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  color: var(--fg);
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--accent);
+}
+
+.input-num {
+  width: 82px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--accent);
+  height: 18px;
+}
+
+input[type='checkbox'] {
+  accent-color: var(--accent);
+}
+
+.badge {
+  padding: 0 5px;
+  border-radius: 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.badge-error {
+  background: var(--err);
+  color: #fff;
+}
+
+.badge-warn {
+  background: var(--warn);
+  color: #111;
+}
+
+.tag {
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.tag-hot {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.tag-cold {
+  background: var(--bg-3);
+  color: var(--fg-muted);
+}
+
+/* phase pill */
+.pill {
+  padding: 1px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: lowercase;
+  white-space: nowrap;
+}
+
+.pill-running {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.pill-applying,
+.pill-planning,
+.pill-validating,
+.pill-tearing_down {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.pill-failed {
+  color: var(--err);
+  border-color: var(--err);
+}
+
+/* status dot */
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--grey);
+  flex-shrink: 0;
+  transition: background-color 250ms ease;
+}
+
+.dot-healthy {
+  background: var(--ok);
+}
+
+.dot-starting,
+.dot-paused {
+  background: var(--warn);
+}
+
+.dot-failed {
+  background: var(--err);
+}
+
+.dot-stopped {
+  background: var(--err);
+  opacity: 0.6;
+}
+
+/* change class chips */
+.cls {
+  padding: 0 5px;
+  border-radius: 2px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.cls-hot {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.cls-cold {
+  background: rgba(210, 153, 34, 0.18);
+  color: var(--warn);
+}
+
+.cls-structural {
+  background: var(--bg-3);
+  color: var(--fg-muted);
+}

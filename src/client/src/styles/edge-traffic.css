@@ -1,0 +1,17 @@
+/* edges carrying traffic get a moving dash */
+.react-flow__edge.tedge-live path.react-flow__edge-path {
+  stroke-dasharray: 6 4;
+  animation: edge-flow 1s linear infinite;
+}
+
+@keyframes edge-flow {
+  to {
+    stroke-dashoffset: -10;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__edge.tedge-live path.react-flow__edge-path {
+    animation: none;
+  }
+}

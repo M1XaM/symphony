@@ -1,0 +1,217 @@
+/* --- drawer --------------------------------------------------------------- */
+
+.drawer {
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+
+.drawer.is-open {
+  height: var(--drawer-h);
+}
+
+.drawer-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--line);
+  height: 30px;
+  flex-shrink: 0;
+}
+
+.tab {
+  padding: 4px 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.tab.is-active {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+.tab-count {
+  margin-left: 4px;
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--bg-3);
+  font-size: 10.5px;
+}
+
+.drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.drawer-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--fg-dim);
+}
+
+/* plan */
+.plan {
+  padding: 6px 10px;
+}
+
+.plan-empty {
+  padding: 8px 0;
+}
+
+.plan-summary {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding-bottom: 6px;
+}
+
+.plan-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.plan-table th {
+  text-align: left;
+  padding: 2px 8px 4px 0;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-dim);
+}
+
+.plan-table td {
+  padding: 3px 8px 3px 0;
+  border-top: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.plan-reason {
+  color: var(--fg-muted);
+}
+
+.plan-table tr.op-started td {
+  background: var(--accent-dim);
+}
+
+.plan-table tr.op-done td:first-child {
+  color: var(--ok);
+}
+
+.plan-table tr.op-failed td {
+  color: var(--err);
+}
+
+.op-state {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.op-state-started {
+  color: var(--accent);
+}
+.op-state-done {
+  color: var(--ok);
+}
+.op-state-failed {
+  color: var(--err);
+}
+
+.findings {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.finding {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 12px;
+}
+
+.finding-sev {
+  width: 52px;
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.finding-error .finding-sev {
+  color: var(--err);
+}
+
+.finding-warning .finding-sev {
+  color: var(--warn);
+}
+
+.finding-path {
+  font-family: var(--mono);
+  color: var(--fg-muted);
+}
+
+/* log */
+.log {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.log-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 2px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.log-lines {
+  flex: 1;
+  overflow: auto;
+  padding: 4px 10px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  user-select: text;
+}
+
+.log-line {
+  display: flex;
+  gap: 10px;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.log-ts {
+  color: var(--fg-dim);
+  flex-shrink: 0;
+}
+
+.log-src {
+  width: 64px;
+  flex-shrink: 0;
+  color: var(--fg-muted);
+}
+
+.log-debug .log-msg {
+  color: var(--fg-muted);
+}
+
+.log-warn .log-msg {
+  color: var(--warn);
+}
+
+.log-error .log-msg {
+  color: var(--err);
+}

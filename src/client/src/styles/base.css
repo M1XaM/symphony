@@ -1,0 +1,79 @@
+/* Symphony — dark instrument panel. One accent, semantic colours for status only. */
+:root {
+  --bg: #121316;
+  --bg-1: #17181c;
+  --bg-2: #1d1f24;
+  --bg-3: #24272e;
+  --line: #2a2d34;
+  --line-strong: #383c45;
+  --fg: #d7dae0;
+  --fg-muted: #8b909a;
+  --fg-dim: #5f646e;
+  --accent: #4f8cff;
+  --accent-dim: rgba(79, 140, 255, 0.18);
+  --ok: #3fb950;
+  --warn: #d29922;
+  --err: #f85149;
+  --grey: #6e7681;
+  --kind-service: #35507a;
+  --kind-broker: #6b4f8a;
+  --kind-db: #3d6b5e;
+  --kind-proxy: #7a5a2f;
+  --kind-infra: #4a4f5a;
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+  --radius: 3px;
+  /* floating chrome: panels hover over the map, they never touch the frame */
+  --radius-lg: 8px;
+  --gap: 10px;
+  --panel-left-w: 232px;
+  --panel-right-w: 300px;
+  --toolbar-h: 38px;
+  --drawer-h: 230px;
+  /* no backdrop blur behind it: blurring whatever the map repaints under four
+     panels costs more per frame than the map itself */
+  --panel-bg: rgba(23, 24, 28, 0.93);
+  /* no blur: WebKitGTK repaints the whole window on every frame the map
+     moves, and re-blurring four panel-sized shadows each time cost more than
+     everything else on screen together */
+  --shadow: 0 0 0 1px rgba(0, 0, 0, 0.35), 0 3px 0 rgba(0, 0, 0, 0.3);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.4 var(--font);
+  overflow: hidden;
+  user-select: none;
+}
+
+input,
+select,
+button {
+  font: inherit;
+  color: inherit;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--fg-muted);
+}
+
+.small {
+  font-size: 11.5px;
+}

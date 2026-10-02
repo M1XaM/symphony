@@ -1,0 +1,106 @@
+/* --- v2: deep health, resources, logs, tests -------------------------------- */
+
+.dot-degraded {
+  background: var(--warn);
+}
+
+.kind-chip.kind-edge {
+  background: var(--bg-3);
+  color: var(--fg);
+}
+
+.checks {
+  padding: 0 10px;
+}
+
+.check {
+  display: grid;
+  grid-template-columns: 8px minmax(0, auto) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 11.5px;
+}
+
+.check .dot {
+  position: relative;
+  top: 0;
+}
+
+.check-name {
+  white-space: nowrap;
+}
+
+.check-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.fault-group {
+  padding: 4px 10px 2px;
+}
+
+.fault-group .fault-grid {
+  padding: 2px 0 0;
+}
+
+.load-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 8px;
+  align-items: center;
+}
+
+.load-row .field-label {
+  margin: 0;
+}
+
+.load-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 6px;
+  flex-wrap: wrap;
+}
+
+.input-inline {
+  width: auto;
+  display: inline-block;
+  padding: 1px 4px;
+}
+
+.summary-hint {
+  padding: 6px 10px;
+}
+
+.tab-live {
+  display: inline-block;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.log-info .log-msg {
+  color: var(--fg);
+}
+
+/* stats: host row then simulation row */
+.stats-wrap {
+  padding-bottom: 8px;
+}
+
+.stats-head {
+  padding: 6px 10px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10.5px;
+}
+
+.chart .series-3 {
+  --series: #3fb950;
+}
+
+.chart .series-4 {
+  --series: #d2a8ff;
+}

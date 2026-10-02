@@ -1,0 +1,186 @@
+/* --- layout --------------------------------------------------------------- */
+
+.app {
+  position: relative;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* the map fills the window */
+.map-layer {
+  position: absolute;
+  inset: 0;
+}
+
+/* ...and every panel floats above it, inset from the window edge. The layer
+   itself is click-through so the gaps between panels stay part of the map. */
+.chrome {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: var(--panel-left-w) minmax(0, 1fr) var(--panel-right-w);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--gap);
+  padding: var(--gap);
+  pointer-events: none;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel-bg);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+}
+
+.panel-top {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+
+/* no Docker: a strip across the top of the toolbar panel */
+.docker-notice {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--err);
+  background: rgba(248, 81, 73, 0.12);
+  user-select: text;
+}
+
+.docker-notice-title {
+  color: var(--err);
+  font-weight: 600;
+}
+
+.docker-notice-detail {
+  color: var(--fg-muted);
+  overflow-wrap: anywhere;
+}
+
+.slot {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  pointer-events: none;
+}
+
+.slot > .panel {
+  flex: 1;
+  min-width: 0;
+}
+
+.slot-left {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.slot-right {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+/* fold handle: middle of the panel's inner edge, and all that is left of the
+   panel once it is folded (the slot is then zero-wide, so it lands on the
+   window edge without moving anywhere else) */
+.panel-toggle {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 46px;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-bg);
+  box-shadow: var(--shadow);
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.panel-toggle:hover {
+  border-color: var(--line-strong);
+  color: var(--fg);
+}
+
+.slot-left .panel-toggle {
+  left: 100%;
+  margin-left: 4px;
+}
+
+.slot-right .panel-toggle {
+  right: 100%;
+  margin-right: 4px;
+}
+
+/* a folded panel takes no column, so the map (and the zoom controls, which
+   read the same variables) get the space back */
+.app.left-folded {
+  --panel-left-w: 0px;
+}
+
+.app.right-folded {
+  --panel-right-w: 0px;
+}
+
+.panel-bottom {
+  grid-column: 1 / -1;
+  grid-row: 3;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.pane-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.section-title {
+  margin: 12px 10px 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.panel-head-note {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--fg-dim);
+}
