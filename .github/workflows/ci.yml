@@ -1,0 +1,36 @@
+# Lint and tests on every push to a branch and every pull request, with the
+# same containerised toolchain as a developer machine (`make lint`, `make
+# test`, `make integration`): the runner needs only Docker and make.
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Lint (gofmt, go vet, client typecheck)
+        run: make lint
+
+      # the blocks contract test runs the five blocks as plain processes
+      - name: Unit tests
+        run: make test
+
+      # real containers on the runner's Docker daemon
+      - name: Integration tests
+        run: |
+          make blocks
+          make integration

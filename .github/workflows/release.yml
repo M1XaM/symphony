@@ -33,6 +33,9 @@ jobs:
 
       # Same containerised build as on a developer machine: bin/linux/ and
       # bin/windows/, each with the window and the CLI.
+      - name: Lint and unit tests
+        run: make lint test
+
       - name: Build
         run: make build
 

@@ -22,6 +22,9 @@
 #                           the app launches from the app grid with no terminal
 #   make blocks          -> build the five block images (symphony/<block>:dev)
 #   make test            -> Go tests (blocks contract test runs the blocks as processes)
+#                           and the client's unit tests
+#   make lint            -> gofmt, go vet (window and CLI builds) and the client
+#                           typecheck, in the container
 #   make integration     -> engine tests against the host's Docker daemon
 #   make tag vX.Y.Z      -> tag HEAD and push the tag; CI builds and publishes
 #                           the release (.github/workflows/release.yml)
@@ -80,7 +83,7 @@ DOCKER_RUN = $(DOCKER) run --rm \
   -v $(IMAGE)-node-modules:/work/client/node_modules \
   -e HOST_UID=$(HOST_UID) -e HOST_GID=$(HOST_GID)
 
-.PHONY: build cli dist image shell run clean clean-docker build-local dev deps bindings check desktop blocks test integration tag
+.PHONY: build cli dist image shell run clean clean-docker build-local dev deps bindings check desktop blocks test lint integration tag
 
 # --- block images ------------------------------------------------------------
 
@@ -94,8 +97,23 @@ blocks:
 	done
 	$(DOCKER) images "symphony/*" --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"
 
-test: image
-	$(DOCKER_RUN) $(IMAGE) go test ./...
+# The window embeds client/dist, which only a frontend build creates; on a
+# fresh checkout go vet and go test need it to exist.
+$(CLIENT)/dist:
+	mkdir -p $@ && touch $@/.gitkeep
+
+test: image $(CLIENT)/dist
+	$(DOCKER_RUN) $(IMAGE) bash -c '\
+	  go test ./... && \
+	  cd client && { [ -x node_modules/.bin/vitest ] || npm ci; } && npm test'
+
+# What `make check` does natively, in the container, plus gofmt. The client's
+# node_modules volume is filled on first use.
+lint: image $(CLIENT)/dist
+	$(DOCKER_RUN) $(IMAGE) bash -c '\
+	  fmt=$$(gofmt -l blocks engine cmd *.go) && [ -z "$$fmt" ] || { echo "gofmt needed:"; echo "$$fmt"; exit 1; }; \
+	  go vet ./... && go vet -tags cli . && \
+	  cd client && { [ -d node_modules/.bin ] || npm ci; } && npm run typecheck'
 
 # Runs inside the builder container with the host's Docker socket and network,
 # so the engine can create real containers and reach their admin ports.

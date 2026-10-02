@@ -121,8 +121,8 @@ one. A template argument is a built-in or saved template's name, a
 running deployment's name, or a topology JSON file (`show` prints one to
 start from; `-` reads stdin); `--name` applies it under another name.
 `fault` takes a node or an edge id (the fault then hits that link only);
-kill, pause and a whole-node partition are done by Docker, so with `--for`
-the CLI stays until they end. `--json` prints results for scripts, `-v`
+kill, pause, crash and a whole-node partition do not end by themselves, so
+with `--for` the CLI stays until they do. `--json` prints results for scripts, `-v`
 every engine log line, and `test` exits with 3 when the run does not pass.
 
 ## How it runs
@@ -153,8 +153,8 @@ it never touches other containers.
 
 The state of every deployment lives in a SQLite database, `symphony.db`, in
 the directory of the binary: its topology (with every hot config and
-resource change made since), admin token, network, phase and the load its
-gateway was told to drive without an end. It is written as things change,
+resource change made since), admin token, network, phase, the faults
+injected into it and the load its gateway was told to drive without an end. It is written as things change,
 before an apply creates anything, so it always describes what should be
 running.
 
@@ -166,9 +166,11 @@ Containers keep running when the window closes. When Symphony opens again
   gone or stopped (Docker restarted, the machine rebooted) or whose apply
   was cut short, and starts its load again;
 - finishes a teardown that was cut short;
-- resumes containers a pause fault left paused (faults end with the session
-  that injected them), and removes containers of this installation that no
-  deployment owns.
+- ends the faults that became due while it was closed (a paused container
+  is resumed, a killed one started, a partitioned one reconnected) and
+  keeps the timers of the ones still running: faults are stored with the
+  deployment, so they do not depend on the process that injected them;
+- removes containers of this installation that no deployment owns.
 
 `symphony-cli restore` does the same from a terminal; other CLI commands
 attach to what runs without repairing anything.
@@ -181,10 +183,12 @@ attach to what runs without repairing anything.
 
 If the binary's directory is not writable, the database goes to the user
 config directory instead (`~/.config/symphony` on Linux, `%AppData%\symphony`
-on Windows). That directory also holds `templates.json` (saved templates) and
-`runs/` (test results). A database created next to a binary of an older
-version takes over the instance id and deployment records it kept there, so
-its containers are still recognised.
+on Windows). That directory also holds `templates.json` (saved templates).
+Test results are in the database too, so the window and the CLI see the same
+runs. A database created next to a binary of an older version takes over
+what that version kept in the config directory: the instance id and the
+deployment records, so its containers are still recognised, and the runs it
+stored as files in `runs/`.
 
 ## Build from source
 
@@ -206,7 +210,8 @@ and **make**:
 | `make run`            | build for Linux, then launch `bin/linux/symphony` |
 | `make desktop`        | register `bin/linux/symphony.desktop` with the desktop, so Symphony appears in the app grid (Linux) |
 | `make blocks`         | build the five block images (`symphony/<block>:dev`) |
-| `make test`           | Go unit tests + blocks contract test (blocks run as processes, no Docker) |
+| `make test`           | Go unit tests + blocks contract test (blocks run as processes, no Docker), and the client's unit tests |
+| `make lint`           | gofmt, `go vet` (window and CLI builds) and the client typecheck, in the container |
 | `make integration`    | engine tests against the host's Docker daemon (real containers) |
 | `make tag vX.Y.Z`     | tag HEAD and push the tag, which publishes a release (see below) |
 | `make image`          | (re)build the `symphony-builder` image from `src/build/docker` |
@@ -226,8 +231,12 @@ webview and no cgo, so outside the container it is just
 
     cd src && CGO_ENABLED=0 go build -tags cli -o ../bin/linux/symphony-cli .
 
-After changing anything in `src/blocks`, run `make blocks`: the app only
-builds an image itself when it is missing.
+After changing anything in `src/blocks`, run `make blocks`: an image built
+that way is the developer's, and the app leaves it alone unless it was built
+for another version of the blocks contract (`wire.Contract`, the
+`symphony.contract` image label). The images the app builds itself carry a
+digest of the sources they came from (`symphony.source`), so a newer
+Symphony replaces the ones an older one built.
 
 ### Native build (optional)
 
@@ -251,7 +260,8 @@ installed. On macOS `bin/darwin/symphony` is a launcher script next to the copie
 ### Layout
 
     Makefile               build, test and release targets
-    .github/workflows/     release.yml: build and publish on a vX.Y.Z tag
+    .github/workflows/     ci.yml: lint and tests on every push and pull request
+                           release.yml: build and publish on a vX.Y.Z tag
     src/                   Wails project root and Go module "symphony"
       main.go              the window's entry: embeds the frontend
       main_cli.go          symphony-cli's entry (-tags cli)
@@ -275,8 +285,8 @@ changes, that the tag does not exist yet and that HEAD is already on the
 remote, then creates an annotated tag and pushes it. The push starts
 `.github/workflows/release.yml`, which:
 
-1. builds the Linux and the Windows binaries (the app and the CLI) in the
-   builder container;
+1. runs the lint and the unit tests, then builds the Linux and the Windows
+   binaries (the app and the CLI) in the builder container;
 2. runs the release gate (`.github/scripts/verify-release.sh`) on a clean
    Ubuntu runner: the Linux binary must be a plain ELF executable that the
    desktop recognises as `application/x-executable`, and must start headless
