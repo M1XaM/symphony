@@ -246,3 +246,226 @@ func TestIntegrationReopen(t *testing.T) {
 		t.Fatalf("still stored after teardown: %+v", left)
 	}
 }
+
+// Faults are undone completely, and by whichever Symphony is there when
+// they are due: a partitioned node answers on its admin port again, a
+// stored fault survives the session that injected it, and one that became
+// overdue while nothing was running is ended by the next Restore.
+func TestIntegrationFaults(t *testing.T) {
+	ctx := context.Background()
+	rt, err := runtime.NewDocker("symphony-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	if _, err := rt.Ping(ctx); err != nil {
+		t.Skip(err)
+	}
+	rt.GC(ctx)
+	defer rt.GC(ctx)
+
+	src, _ := filepath.Abs("../..")
+	st, err := store.Open(filepath.Join(t.TempDir(), store.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	session := func() *core.Engine {
+		return core.New(core.Options{Runtime: rt, Bus: events.NewBus(), Images: images.NewEnsurer(os.DirFS(src)), Store: st})
+	}
+
+	topo := spec.Topology{Version: spec.CurrentVersion, Name: "IT faults",
+		Nodes: []spec.Node{
+			spec.NewNode("gateway", spec.KindInfra, spec.Position{}),
+			spec.NewNode("front", spec.KindService, spec.Position{}),
+			spec.NewNode("back", spec.KindService, spec.Position{}),
+		},
+		Edges: []spec.Edge{
+			{ID: "e-gw-front", From: "gateway", To: "front", Kind: spec.EdgeCalls},
+			{ID: "e-front-back", From: "front", To: "back", Kind: spec.EdgeCalls},
+		},
+	}.Normalized()
+	slug := spec.Slug(topo.Name)
+	back := slug + "-back"
+	actx, cancel := context.WithTimeout(ctx, 6*time.Minute)
+	defer cancel()
+	first := session()
+	if err := first.Apply(actx, topo); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	answers := func(eng *core.Engine, node string) error {
+		var err error
+		for i := 0; i < 50; i++ {
+			if _, err = eng.Control(ctx, topo.Name, node, control.Command{Op: "config.get"}); err == nil {
+				return nil
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		return err
+	}
+
+	// a whole-node partition, cleared: the admin port is reachable again
+	if err := first.InjectFault(ctx, topo.Name, "back", spec.FaultSpec{Kind: spec.FaultPartition}); err != nil {
+		t.Fatalf("partition: %v", err)
+	}
+	if fs, _ := st.Faults(slug); len(fs) != 1 || fs[0].Kind != "partition" {
+		t.Fatalf("stored faults after partition: %+v", fs)
+	}
+	if err := first.ClearFaults(ctx, topo.Name, "back"); err != nil {
+		t.Fatal(err)
+	}
+	if err := answers(first, "back"); err != nil {
+		t.Fatalf("back does not answer after the partition was cleared: %v", err)
+	}
+	if fs, _ := st.Faults(slug); len(fs) != 0 {
+		t.Fatalf("faults still stored after clearing: %+v", fs)
+	}
+
+	// held memory and a crash are both undone by clearing
+	if err := first.InjectFault(ctx, topo.Name, "back", spec.FaultSpec{Kind: spec.FaultMemory, Params: map[string]any{"mb": 20.0}}); err != nil {
+		t.Fatalf("memory: %v", err)
+	}
+	if err := first.ClearFaults(ctx, topo.Name, "back"); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := first.Control(ctx, topo.Name, "back", control.Command{Op: "chaos.clear"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := snap.State.(map[string]any)["released_mb"].(float64); left != 0 {
+		t.Fatalf("memory was still held after clearing: %v", snap.State)
+	}
+	if err := first.InjectFault(ctx, topo.Name, "back", spec.FaultSpec{Kind: spec.FaultCrash}); err != nil {
+		t.Fatalf("crash: %v", err)
+	}
+	time.Sleep(time.Second)
+	if c, _ := rt.Inspect(ctx, back); c.Running {
+		t.Fatalf("back still runs after a crash")
+	}
+	if err := first.ClearFaults(ctx, topo.Name, "back"); err != nil {
+		t.Fatal(err)
+	}
+	if err := answers(first, "back"); err != nil {
+		t.Fatalf("back does not answer after the crash was cleared: %v", err)
+	}
+
+	// a kill another session injected, not due yet: the next session leaves
+	// the node down instead of recreating the deployment
+	if err := rt.Kill(ctx, back); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.AddFault(slug, store.Fault{Node: "back", Kind: "kill", Until: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	// ...and a link fault that ended inside its block while nobody was
+	// there to drop the record: any session that attaches forgets it
+	if _, _, err := st.AddFault(slug, store.Fault{Node: "front", Kind: "latency", BlockID: "f-9", Until: time.Now().Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	second := session()
+	broken, err := second.Attach(ctx)
+	if err != nil || len(broken) != 0 {
+		t.Fatalf("attach with a node held down by a fault: broken %v, %v", broken, err)
+	}
+	if fs, _ := st.Faults(slug); len(fs) != 1 || fs[0].Kind != "kill" {
+		t.Fatalf("stored faults after attach: %+v", fs)
+	}
+	if err := second.ClearFaults(ctx, topo.Name, "back"); err != nil {
+		t.Fatal(err)
+	}
+	if err := answers(second, "back"); err != nil {
+		t.Fatalf("back does not answer after the kill was cleared: %v", err)
+	}
+
+	// a pause that became overdue while nothing was running
+	if err := rt.Pause(ctx, back); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.AddFault(slug, store.Fault{Node: "back", Kind: "pause", Until: time.Now().Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	third := session()
+	third.Restore(ctx)
+	if c, _ := rt.Inspect(ctx, back); c.State == runtime.StatePaused {
+		t.Fatalf("back still paused after Restore")
+	}
+	if fs, _ := st.Faults(slug); len(fs) != 0 {
+		t.Fatalf("overdue fault still stored: %+v", fs)
+	}
+	if deps := third.Deployments(); len(deps) != 1 || deps[0].Phase != core.PhaseRunning {
+		t.Fatalf("after restore: %+v", deps)
+	}
+
+	if err := third.Teardown(ctx, topo.Name); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+}
+
+// An apply that fails halfway leaves containers behind that the applied
+// topology never included. Applying again replaces them instead of tripping
+// over their names, and a teardown removes them too.
+func TestIntegrationRetryAfterFailedApply(t *testing.T) {
+	ctx := context.Background()
+	rt, err := runtime.NewDocker("symphony-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close()
+	if _, err := rt.Ping(ctx); err != nil {
+		t.Skip(err)
+	}
+	rt.GC(ctx)
+	defer rt.GC(ctx)
+
+	src, _ := filepath.Abs("../..")
+	st, err := store.Open(filepath.Join(t.TempDir(), store.FileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	eng := core.New(core.Options{Runtime: rt, Bus: events.NewBus(), Images: images.NewEnsurer(os.DirFS(src)), Store: st})
+
+	good := spec.Topology{Version: spec.CurrentVersion, Name: "IT retry",
+		Nodes: []spec.Node{
+			spec.NewNode("gateway", spec.KindInfra, spec.Position{}),
+			spec.NewNode("front", spec.KindService, spec.Position{}),
+		},
+		Edges: []spec.Edge{{ID: "e-gw-front", From: "gateway", To: "front", Kind: spec.EdgeCalls}},
+	}.Normalized()
+	// the service node runs the database image, which refuses to start as a
+	// service: the gateway is created first and then the apply fails
+	bad := good.Clone()
+	bad.Nodes[1].Image = spec.DefaultImage(spec.KindDB)
+
+	actx, cancel := context.WithTimeout(ctx, 6*time.Minute)
+	defer cancel()
+	if err := eng.Apply(actx, bad); err == nil {
+		t.Fatal("the broken topology applied")
+	}
+	if left, _ := rt.List(ctx); len(left) == 0 {
+		t.Fatal("the failed apply left nothing behind; the test does not test what it means to")
+	}
+	if err := eng.Apply(actx, good); err != nil {
+		t.Fatalf("applying again after a failed apply: %v", err)
+	}
+	if deps := eng.Deployments(); len(deps) != 1 || deps[0].Phase != core.PhaseRunning {
+		t.Fatalf("after the retry: %+v", deps)
+	}
+	if err := eng.Teardown(ctx, good.Name); err != nil {
+		t.Fatalf("teardown: %v", err)
+	}
+
+	// a failed apply, torn down without a retry
+	if err := eng.Apply(actx, bad); err == nil {
+		t.Fatal("the broken topology applied")
+	}
+	if err := eng.Teardown(ctx, bad.Name); err != nil {
+		t.Fatalf("teardown after a failed apply: %v", err)
+	}
+	if left, _ := rt.List(ctx); len(left) != 0 {
+		t.Fatalf("containers left after teardown: %v", left)
+	}
+	if recs, _ := st.Deployments(); len(recs) != 0 {
+		t.Fatalf("still stored: %+v", recs)
+	}
+}
