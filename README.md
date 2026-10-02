@@ -13,8 +13,8 @@ Every `vX.Y.Z` tag publishes a release with one zip per platform (plus
 
 | archive | contains |
 |---------|----------|
-| `symphony-vX.Y.Z-linux-amd64.zip`   | `symphony` (the app), `symphony-cli` (the command line) and `GUIDE.md` (the CLI's guide), Linux x86-64 |
-| `symphony-vX.Y.Z-windows-amd64.zip` | `symphony.exe`, `symphony-cli.exe`, `GUIDE.md` and `README.txt`, Windows 10/11 x86-64 |
+| `symphony-vX.Y.Z-linux-amd64.zip`   | `symphony` (the app), `symphony-cli` (the command line) and a short `README.md`, Linux x86-64 |
+| `symphony-vX.Y.Z-windows-amd64.zip` | `symphony.exe`, `symphony-cli.exe` and a short `README.md`, Windows 10/11 x86-64 |
 
 Each unzips to a folder of the same name. Keep the app and the CLI together
 in it: they keep their state in one file next to the binary (see
@@ -98,9 +98,8 @@ on whatever the window applied.
 
 Its guide is **[docs/CLI.md](docs/CLI.md)**: the concepts and conventions,
 the usual workflows with examples, every command, the fault kinds and the
-scenarios, and a section of rules for agentic models that drive it. The same
-guide ships in the release archives as `GUIDE.md`, and the binary itself
-answers:
+scenarios, and a section of rules for agentic models that drive it. The
+binary writes the same guide on request, and answers for itself:
 
     symphony-cli --help              # every command
     symphony-cli <command> --help    # one command, with examples

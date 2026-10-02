@@ -180,8 +180,8 @@ remote, then creates an annotated tag and pushes it. The push starts
    WebKit's own helper processes; the Windows binary must be a GUI-subsystem
    executable, so no console window opens with it;
 3. runs a smoke test of the Linux CLI;
-4. zips each platform (`make dist`), each with the `GUIDE.md` the CLI
-   generates;
+4. zips each platform (`make dist`): the two binaries and a short
+   `README.md` (`src/build/release/`);
 5. only if all of that passes, publishes the GitHub Release with the two
    zips, `SHA256SUMS` and notes generated from the commits since the last
    tag.
