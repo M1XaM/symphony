@@ -4,7 +4,13 @@ Symphony for Windows
   symphony.exe       the app: draw a topology, run it as Docker containers,
                      drive load, inject faults, run the test scenarios
   symphony-cli.exe   the same app from a terminal (Command Prompt or
-                     PowerShell); run "symphony-cli help" for the commands
+                     PowerShell); "symphony-cli --help" lists the commands,
+                     "symphony-cli <command> --help" explains one
+  GUIDE.md           the command line's guide: workflows with examples,
+                     every command, the fault kinds and the scenarios. It
+                     is also what to give an agentic model that is to drive
+                     symphony-cli ("symphony-cli --json-help" prints the
+                     same catalogue as JSON)
 
 Keep the two files in the same folder: they share their state in
 symphony.db, which is created next to them on the first run. Remove it to

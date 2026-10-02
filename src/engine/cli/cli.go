@@ -48,10 +48,27 @@ const (
 type command struct {
 	name   string
 	args   string
-	help   string
+	help   string // first line: the summary; the rest: details
 	group  string
 	docker docker
 	run    func(e *env, args []string) error
+
+	flags    []flagDoc
+	examples []string
+	// changes: the command changes state (containers, the database, a
+	// running node), as opposed to only reading it
+	changes bool
+	// blocks says when the command does not return at once, "" if it does
+	blocks string
+	// standalone commands need no engine and no state database
+	standalone bool
+}
+
+// flagDoc describes one flag of a command.
+type flagDoc struct {
+	name  string // as typed: --name, -n
+	value string // placeholder of its value, "" for a switch
+	help  string
 }
 
 // env is what a command runs with.
@@ -83,69 +100,81 @@ var errFailed = errors.New("failed")
 // returns the exit code. blocks is the embedded source the block images are
 // built from.
 func Main(args []string, blocks fs.FS) int {
+	return run(args, blocks, os.Stdout, os.Stderr)
+}
+
+func run(args []string, blocks fs.FS, stdout, stderr io.Writer) int {
 	global := flag.NewFlagSet("symphony-cli", flag.ContinueOnError)
 	global.SetOutput(io.Discard)
 	db := global.String("db", "", "")
 	asJSON := global.Bool("json", false, "")
 	verbose := global.Bool("v", false, "")
+	jsonHelp := global.Bool("json-help", false, "")
 	if err := global.Parse(args); err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			usage(os.Stdout)
+		if errors.Is(err, flag.ErrHelp) { // -h, --help
+			usage(stdout)
 			return exitOK
 		}
-		fmt.Fprintln(os.Stderr, "symphony-cli:", err)
-		usage(os.Stderr)
+		fmt.Fprintln(stderr, "symphony-cli:", err)
+		usage(stderr)
 		return exitUsage
 	}
+	if *jsonHelp {
+		return printJSONHelp(stdout, stderr)
+	}
 	rest := global.Args()
-	if len(rest) == 0 || rest[0] == "help" || rest[0] == "--help" {
-		if len(rest) > 1 {
-			if c := find(rest[1]); c != nil {
-				fmt.Printf("usage: symphony-cli %s %s\n\n%s\n", c.name, c.args, c.help)
-				return exitOK
-			}
-		}
-		usage(os.Stdout)
+	if len(rest) == 0 {
+		usage(stdout)
 		return exitOK
 	}
 	cmd := find(rest[0])
 	if cmd == nil {
-		fmt.Fprintf(os.Stderr, "symphony-cli: unknown command %q (see symphony-cli help)\n", rest[0])
+		fmt.Fprintf(stderr, "symphony-cli: unknown command %q (see symphony-cli --help)\n", rest[0])
 		return exitUsage
+	}
+	// <command> --help, wherever it stands among the arguments
+	for _, a := range rest[1:] {
+		if a == "--help" || a == "-help" || a == "-h" {
+			commandHelp(stdout, cmd)
+			return exitOK
+		}
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	b, err := backend.New(backend.Options{Blocks: blocks, DBPath: *db})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "symphony-cli:", err)
-		return exitError
-	}
-	defer b.Close()
-	api.Startup(b.API, ctx, nil)
-	e := &env{ctx: ctx, b: b, a: b.API, out: os.Stdout, json: *asJSON, verbose: *verbose}
-
-	if cmd.docker != noDocker {
-		b.Connect(ctx, false)
-	}
-	e.docker = b.API.GetRuntimeStatus()
-	if cmd.docker == needDocker && !e.docker.Available {
-		fmt.Fprintf(os.Stderr, "symphony-cli: Docker is not available: install Docker and start it, then try again\n  %s\n", e.docker.Detail)
-		return exitError
-	}
-	e.echo.Store(true)
-	b.Bus.Subscribe(func(ev events.Event) {
-		l, ok := ev.Payload.(events.LogPayload)
-		if !ok || !e.echo.Load() {
-			return
+	e := &env{ctx: ctx, out: stdout, json: *asJSON, verbose: *verbose}
+	if !cmd.standalone {
+		b, err := backend.New(backend.Options{Blocks: blocks, DBPath: *db})
+		if err != nil {
+			fmt.Fprintln(stderr, "symphony-cli:", err)
+			return exitError
 		}
-		// the fault commands say what they injected themselves
-		if e.verbose || l.Level == "error" || (l.Level == "warn" && l.Source != "fault") {
-			fmt.Fprintln(os.Stderr, logLine(l))
-		}
-	})
+		defer b.Close()
+		api.Startup(b.API, ctx, nil)
+		e.b, e.a = b, b.API
 
-	err = cmd.run(e, rest[1:])
+		if cmd.docker != noDocker {
+			b.Connect(ctx, false)
+		}
+		e.docker = b.API.GetRuntimeStatus()
+		if cmd.docker == needDocker && !e.docker.Available {
+			fmt.Fprintf(stderr, "symphony-cli: Docker is not available: install Docker and start it, then try again\n  %s\n", e.docker.Detail)
+			return exitError
+		}
+		e.echo.Store(true)
+		b.Bus.Subscribe(func(ev events.Event) {
+			l, ok := ev.Payload.(events.LogPayload)
+			if !ok || !e.echo.Load() {
+				return
+			}
+			// the fault commands say what they injected themselves
+			if e.verbose || l.Level == "error" || (l.Level == "warn" && l.Source != "fault") {
+				fmt.Fprintln(stderr, logLine(l))
+			}
+		})
+	}
+
+	err := cmd.run(e, rest[1:])
 	var ue usageError
 	switch {
 	case err == nil:
@@ -153,13 +182,13 @@ func Main(args []string, blocks fs.FS) int {
 	case errors.Is(err, errFailed):
 		return exitFailed
 	case errors.As(err, &ue):
-		fmt.Fprintf(os.Stderr, "symphony-cli %s: %s\nusage: symphony-cli %s %s\n", cmd.name, ue.msg, cmd.name, cmd.args)
+		fmt.Fprintf(stderr, "symphony-cli %s: %s\nusage: symphony-cli %s\n(symphony-cli %s --help explains it)\n", cmd.name, ue.msg, synopsis(cmd), cmd.name)
 		return exitUsage
 	case ctx.Err() != nil:
-		fmt.Fprintln(os.Stderr, "interrupted")
+		fmt.Fprintln(stderr, "interrupted")
 		return exitError
 	default:
-		fmt.Fprintf(os.Stderr, "symphony-cli %s: %v\n", cmd.name, err)
+		fmt.Fprintf(stderr, "symphony-cli %s: %v\n", cmd.name, err)
 		return exitError
 	}
 }
@@ -171,34 +200,6 @@ func find(name string) *command {
 		}
 	}
 	return nil
-}
-
-func usage(w io.Writer) {
-	fmt.Fprint(w, `symphony-cli drives Symphony from a terminal: the same engine, state and
-Docker containers as the desktop app, which picks up what it changes.
-
-usage: symphony-cli [--db FILE] [--json] [-v] <command> [arguments]
-
-  --db FILE   state database (default: symphony.db next to the binary, or $SYMPHONY_DB)
-  --json      print results as JSON
-  -v          print every engine log line, not only warnings and errors
-`)
-	group := ""
-	for _, c := range commands {
-		if c.group != group {
-			group = c.group
-			fmt.Fprintf(w, "\n%s\n", group)
-		}
-		fmt.Fprintf(w, "  %s\n      %s\n", strings.TrimSpace(c.name+" "+c.args), firstLine(c.help))
-	}
-	fmt.Fprint(w, "\nsymphony-cli help <command> explains one command.\n")
-}
-
-func firstLine(s string) string {
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return s[:i]
-	}
-	return s
 }
 
 // --- arguments ---------------------------------------------------------------

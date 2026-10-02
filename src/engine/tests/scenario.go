@@ -67,6 +67,13 @@ type Scenario struct {
 	Reveals string `json:"reveals,omitempty"`
 }
 
+// Catalogue returns the predefined scenarios, sorted by id; nil if the
+// embedded files cannot be read (a Runner reports why).
+func Catalogue() []Scenario {
+	all, _ := loadScenarios()
+	return all
+}
+
 // loadScenarios reads the embedded catalogue, sorted by id.
 func loadScenarios() ([]Scenario, error) {
 	var out []Scenario

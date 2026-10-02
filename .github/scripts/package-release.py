@@ -5,26 +5,45 @@
 
 bin/linux/ becomes symphony-<version>-linux-amd64.zip (the window and the
 CLI) and bin/windows/ becomes symphony-<version>-windows-amd64.zip (the two
-.exe files and README.txt). Each archive holds one folder of the same name,
-and SHA256SUMS lists both. File modes are kept, so the Linux binaries stay
+.exe files and README.txt). Both get GUIDE.md, which the Linux CLI writes
+(`symphony-cli generate-guide`), so the guide describes exactly the binaries
+it is shipped with. Each archive holds one folder of the same name, and
+SHA256SUMS lists both. File modes are kept, so the Linux binaries stay
 executable when unzipped.
 """
 import hashlib
 import os
+import subprocess
 import sys
 import zipfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # platform directory -> archive suffix and files: (source, name in the archive)
+GUIDE = "GUIDE.md"  # generated into the dist directory, see write_guide
+
 ARCHIVES = {
-    "linux": ("linux-amd64", [("symphony", None), ("symphony-cli", None)]),
+    "linux": ("linux-amd64", [("symphony", None), ("symphony-cli", None), (GUIDE, GUIDE)]),
     "windows": ("windows-amd64", [
         ("symphony.exe", None),
         ("symphony-cli.exe", None),
         (os.path.join(REPO, "src", "build", "windows", "README.txt"), "README.txt"),
+        (GUIDE, GUIDE),
     ]),
 }
+
+
+def write_guide(bin_dir, dist):
+    """Has the Linux CLI write its guide, and returns the file."""
+    cli = os.path.join(bin_dir, "linux", "symphony-cli")
+    if not os.path.isfile(cli):
+        sys.exit(f"missing {cli}: run `make build` first")
+    out = os.path.abspath(os.path.join(dist, GUIDE))
+    try:
+        subprocess.run([os.path.abspath(cli), "generate-guide", "--out", out], check=True, stdout=subprocess.DEVNULL)
+    except (OSError, subprocess.CalledProcessError) as err:
+        sys.exit(f"could not generate {GUIDE} with {cli}: {err}")
+    return out
 
 
 def main():
@@ -32,13 +51,17 @@ def main():
         sys.exit(__doc__)
     version, bin_dir, dist = sys.argv[1:]
     os.makedirs(dist, exist_ok=True)
+    guide = write_guide(bin_dir, dist)
     sums = []
     for platform, (suffix, files) in ARCHIVES.items():
         name = f"symphony-{version}-{suffix}"
         archive = os.path.join(dist, name + ".zip")
         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as z:
             for src, arcname in files:
-                path = src if os.path.isabs(src) else os.path.join(bin_dir, platform, src)
+                if src == GUIDE:
+                    path = guide
+                else:
+                    path = src if os.path.isabs(src) else os.path.join(bin_dir, platform, src)
                 if not os.path.isfile(path):
                     sys.exit(f"missing {path}: run `make build` first")
                 info = zipfile.ZipInfo.from_file(path, f"{name}/{arcname or os.path.basename(src)}")
@@ -50,6 +73,7 @@ def main():
         with open(archive, "rb") as f:
             sums.append(f"{hashlib.sha256(f.read()).hexdigest()}  {os.path.basename(archive)}\n")
         print(archive)
+    os.remove(guide)
     with open(os.path.join(dist, "SHA256SUMS"), "w") as f:
         f.writelines(sums)
 

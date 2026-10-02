@@ -49,7 +49,10 @@ jobs:
       - name: CLI smoke test
         run: |
           cli=bin/linux/symphony-cli
-          "$cli" help >/dev/null
+          "$cli" --help >/dev/null
+          "$cli" apply --help | grep -q '^usage: symphony-cli apply'
+          "$cli" --json-help | python3 -c 'import json, sys; json.load(sys.stdin)'
+          "$cli" generate-guide --out - | grep -q '^## For agentic models'
           "$cli" --db "$RUNNER_TEMP/cli.db" templates
           "$cli" --db "$RUNNER_TEMP/cli.db" validate "Orchestration (saga)"
 

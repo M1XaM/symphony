@@ -401,6 +401,12 @@ func cmdLogs(e *env, args []string) error {
 }
 
 func cmdTop(e *env, args []string) error {
+	fset := flag.NewFlagSet("top", flag.ContinueOnError)
+	count := fset.Int("count", 0, "")
+	args, err := parse(fset, args)
+	if err != nil {
+		return err
+	}
 	if len(args) > 1 {
 		return usagef("takes at most one deployment")
 	}
@@ -425,27 +431,34 @@ func cmdTop(e *env, args []string) error {
 	e.b.Metrics.Start(e.ctx)
 	header := "TIME      SAGAS/S   P50 MS   P99 MS  FAILED     LAG   CPU %  FAULTS"
 	last, lines := time.Time{}, 0
-	for {
+	// the collector's first sample is only its baseline: all zeros
+	baseline := true
+	for *count <= 0 || lines < *count {
 		select {
 		case <-e.ctx.Done():
 			return nil
 		case m := <-ticks:
+			if baseline {
+				baseline = false
+				continue
+			}
 			if time.Since(last) < 900*time.Millisecond {
 				continue
 			}
 			last = time.Now()
+			lines++
 			if e.json {
 				_ = json.NewEncoder(e.out).Encode(m)
 				continue
 			}
-			if lines%20 == 0 {
+			if lines%20 == 1 {
 				fmt.Fprintln(e.out, header)
 			}
-			lines++
 			fmt.Fprintf(e.out, "%s %8.1f %8.1f %8.1f %6.1f%% %7d %7.1f %7d\n", time.UnixMilli(m.Ts).Format("15:04:05"),
 				m.SagasPerSec, m.LatencyMs, m.P99Ms, m.ErrorRate*100, m.ConsumerLag, m.CPUPct, m.ActiveFaults)
 		}
 	}
+	return nil
 }
 
 func cmdPs(e *env, args []string) error {
@@ -478,8 +491,18 @@ func cmdPs(e *env, args []string) error {
 }
 
 func cmdLog(e *env, args []string) error {
+	fset := flag.NewFlagSet("log", flag.ContinueOnError)
+	dur := fset.Duration("for", 0, "")
+	args, err := parse(fset, args)
+	if err != nil {
+		return err
+	}
 	if len(args) > 0 {
 		return usagef("takes no arguments")
+	}
+	var end <-chan time.Time
+	if *dur > 0 {
+		end = time.After(*dur)
 	}
 	e.echo.Store(false)
 	lines := make(chan events.LogPayload, 256)
@@ -495,6 +518,8 @@ func cmdLog(e *env, args []string) error {
 	for {
 		select {
 		case <-e.ctx.Done():
+			return nil
+		case <-end:
 			return nil
 		case l := <-lines:
 			if e.json {
