@@ -234,6 +234,29 @@ symphony-cli save my-system.json --name "My system"
 
 Docker: no. Changes state.
 
+#### generate
+
+`symphony-cli generate [--bias N] [--name NAME] [--seed N]`
+
+Print a random saga topology as JSON.
+
+What the window's Generate slider draws. The bias runs from 0 (orchestration: every
+step is called, no broker) to 1 (choreography: every step reacts to an event, six
+brokers); the number of brokers grows evenly in between, one per service that is
+listened to. Size and shape are drawn anew on every call, laid out left to right as a
+tree. Give the output to save, validate, plan or apply.
+
+- `--bias N`: 0 = orchestration ... 1 = choreography (default 0.5)
+- `--name NAME`: the topology's name (default "Generated")
+- `--seed N`: draw the same topology again (default: a new one every time)
+
+```sh
+symphony-cli generate --bias 0.8 --name "Event mesh" > mesh.json
+symphony-cli generate --bias 0.2 | symphony-cli save - --name "Small orchestration"
+```
+
+Docker: no. Only reads.
+
 #### delete
 
 `symphony-cli delete <template>`
@@ -457,14 +480,19 @@ Docker: required. Changes state.
 
 #### logs
 
-`symphony-cli logs <deployment> <node> [-n LINES]`
+`symphony-cli logs <deployment> <node> | --container NAME [-n LINES]`
 
-A node's recent log lines.
+A node's recent log lines, or one container's.
 
+With --container: what that one container has written (docker logs), which is what the
+window's Log tab shows for it; ps lists the names.
+
+- `--container NAME`: one of Symphony's containers, in place of a deployment and a node
 - `-n LINES`: how many lines (default 100)
 
 ```sh
 symphony-cli logs "Orchestration (saga)" orchestrator -n 50
+symphony-cli logs --container orchestration-saga-payment-1
 ```
 
 Docker: required. Only reads.

@@ -10,9 +10,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"symphony/blocks/common/control"
 	"symphony/engine/blockclient"
@@ -42,6 +45,8 @@ type API struct {
 	docker events.RuntimeStatusPayload
 	// saveDialog asks the user where to save a file; nil outside the window
 	saveDialog SaveDialog
+	// openDialog asks which file to open; nil outside the window
+	openDialog OpenDialog
 }
 
 // SaveDialog asks where to save a file of the given kind ("md", "pdf",
@@ -161,7 +166,11 @@ func (a *API) ExportTemplate(t spec.Topology) (ExportResult, error) {
 	if err != nil {
 		return ExportResult{}, err
 	}
-	path, err := a.saveDialog(fileSlug(t.Name)+".json", "json")
+	file := strings.Trim(spec.Slug(t.Name), "-")
+	if file == "" {
+		file = "template"
+	}
+	path, err := a.saveDialog(file+".json", "json")
 	if err != nil {
 		return ExportResult{}, err
 	}
@@ -175,26 +184,63 @@ func (a *API) ExportTemplate(t spec.Topology) (ExportResult, error) {
 	return ExportResult{Path: path}, nil
 }
 
-// fileSlug turns a template name into a file name: lower case, with every
-// run of anything but letters and digits as one dash.
-func fileSlug(name string) string {
-	var b strings.Builder
-	dash := false
-	for _, r := range strings.ToLower(name) {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			if dash && b.Len() > 0 {
-				b.WriteByte('-')
-			}
-			dash = false
-			b.WriteRune(r)
-		} else {
-			dash = true
-		}
+// OpenDialog asks which file of the given kind ("json") to open. It returns
+// "" when the user cancels.
+type OpenDialog func(format string) (string, error)
+
+// SetOpenDialog gives the API the window's open dialog. A package function,
+// so it is not exposed as a binding.
+func SetOpenDialog(a *API, fn OpenDialog) { a.openDialog = fn }
+
+// ImportResult is the template read from the file the user picked, or that
+// the user cancelled.
+type ImportResult struct {
+	Topology  spec.Topology `json:"topology"`
+	Cancelled bool          `json:"cancelled"`
+}
+
+// ImportTemplate reads a template from a JSON file the user picks: what
+// ExportTemplate and `symphony-cli show` write. Nothing is stored; the
+// template goes onto the map, to be saved from there.
+func (a *API) ImportTemplate() (ImportResult, error) {
+	if a.openDialog == nil {
+		return ImportResult{}, errors.New("no open dialog: templates are imported from the window, or with symphony-cli save <file>")
 	}
-	if b.Len() == 0 {
-		return "template"
+	path, err := a.openDialog("json")
+	if err != nil {
+		return ImportResult{}, err
 	}
-	return b.String()
+	if path == "" {
+		return ImportResult{Cancelled: true}, nil
+	}
+	t, err := ReadTopology(path)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	a.bus.Log("info", "library", fmt.Sprintf("template %q imported from %s", t.Name, path))
+	return ImportResult{Topology: t}, nil
+}
+
+// ReadTopology reads a topology from a JSON file.
+func ReadTopology(path string) (spec.Topology, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return spec.Topology{}, err
+	}
+	var t spec.Topology
+	if err := json.Unmarshal(b, &t); err != nil {
+		return spec.Topology{}, fmt.Errorf("%s is not a template: %w", filepath.Base(path), err)
+	}
+	if len(t.Nodes) == 0 {
+		return spec.Topology{}, fmt.Errorf("%s is not a template: it has no nodes", filepath.Base(path))
+	}
+	return t.Normalized(), nil
+}
+
+// GenerateTopology draws a random saga topology under the given name: bias 0
+// leans to orchestration, 1 to choreography. See spec.Generate.
+func (a *API) GenerateTopology(bias float64, name string) spec.Topology {
+	return spec.Generate(bias, name, rand.New(rand.NewSource(time.Now().UnixNano())))
 }
 
 // GetLogHistory returns the log lines emitted before the webview attached.

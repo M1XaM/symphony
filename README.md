@@ -58,9 +58,14 @@ The map fills the window and the panels float over it.
   template**. A dot marks every template the engine is running; several run
   side by side, each on its own network. The three dots on a template's card
   export it as JSON or, for your own, delete it. A name takes English
-  letters, digits, spaces and special characters. While building a template,
-  the **Generate** slider draws a random topology on every move, leaning
-  towards orchestration at one end and choreography at the other.
+  letters, digits, spaces and special characters. Change a template on the
+  map and **Save** appears in the toolbar: it stores the change in your own
+  template, or saves a changed built-in one as a copy. While building a
+  template, the **Generate** slider draws a random topology on every move:
+  small or large, laid out left to right as a tree. There is no broker at
+  the orchestration end and six at the choreography end, the number growing
+  evenly in between, one for every service that others listen to. **Import** puts an exported
+  template back on the map.
 - **Map**: drag between handles to connect nodes (the edge kind is inferred),
   Delete removes the selection. Once applied, edges turn green, yellow or red
   with their error rate, and edges carrying traffic animate.

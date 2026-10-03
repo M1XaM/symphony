@@ -7,6 +7,7 @@
 #   make build           -> build in the container, for Linux and Windows:
 #                             bin/linux/symphony, bin/linux/symphony-cli
 #                             bin/windows/symphony.exe, bin/windows/symphony-cli.exe
+#                           each with the README.md its release archive carries
 #                           (symphony is the window, symphony-cli the same app
 #                           from a terminal)
 #   make cli             -> build only the symphony-cli binaries
@@ -258,10 +259,16 @@ ifeq ($(OS),linux)
 endif
 	@echo "built $(OUT) and $(OUTDIR)/$(CLI)"
 
+# Next to the binaries goes the readme a release archive carries for that
+# platform, so a local build reads the same as a downloaded one. The CLI's
+# guide is not part of either: `symphony-cli generate-guide` writes it on
+# request, and one left from an older binary would describe that one.
 install-cli:
 	mkdir -p $(OUTDIR)
 	cp $(SRC)/build/bin/$(CLI) $(OUTDIR)/$(CLI)
 	chmod +x $(OUTDIR)/$(CLI)
+	if [ -f $(SRC)/build/release/README.$(OS).md ]; then cp $(SRC)/build/release/README.$(OS).md $(OUTDIR)/README.md; fi
+	rm -f $(OUTDIR)/GUIDE.md
 
 # Registers the launcher for the current user (GNOME, KDE, XFCE all read
 # ~/.local/share/applications). Run again after moving the repository.

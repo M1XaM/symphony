@@ -1,4 +1,4 @@
-import { selectBusy, selectDockerUp, selectIsApplied, selectPhase, useSymphonyStore } from '../store/useSymphonyStore'
+import { selectBusy, selectDockerUp, selectIsApplied, selectPhase, selectUnsaved, useSymphonyStore } from '../store/useSymphonyStore'
 
 const PHASE_LABEL: Record<string, string> = {
   idle: 'idle',
@@ -22,6 +22,9 @@ export function Toolbar() {
   const planApply = useSymphonyStore((s) => s.planApply)
   const apply = useSymphonyStore((s) => s.apply)
   const teardown = useSymphonyStore((s) => s.teardown)
+  const unsaved = useSymphonyStore(selectUnsaved)
+  const builtIn = useSymphonyStore((s) => s.presets.some((p) => p.name === s.topology.name))
+  const saveChanges = useSymphonyStore((s) => s.saveChanges)
 
   const errors = validation.filter((v) => v.severity === 'error').length
   const warnings = validation.length - errors
@@ -38,6 +41,16 @@ export function Toolbar() {
         aria-label="topology name"
       />
       <div className="toolbar-spacer" />
+      {unsaved ? (
+        <button
+          type="button"
+          className="btn btn-accent"
+          onClick={() => void saveChanges()}
+          title={builtIn ? 'a built-in template cannot be changed: saves what is on the map as a new template' : `save the changes to "${name}"`}
+        >
+          Save
+        </button>
+      ) : null}
       <button type="button" className="btn" onClick={validate} disabled={busy}>
         Validate
         {validation.length > 0 ? (

@@ -10,10 +10,24 @@ import { clampDrawerHeight } from './store/slices/panels'
 import { useSymphonyStore, type PanelSide } from './store/useSymphonyStore'
 
 const LABEL: Record<PanelSide, string> = { left: 'elements and templates', right: 'inspector' }
+
+type Way = 'left' | 'right' | 'up' | 'down'
+const TURN: Record<Way, number> = { right: 0, down: 90, left: 180, up: 270 }
+
+/** The arrow on a fold handle. Drawn rather than typed, so it sits in the
+ *  middle of the handle whichever way it points. */
+function Chevron({ way }: { way: Way }) {
+  return (
+    <svg className="chevron" width="8" height="8" viewBox="0 0 8 8" aria-hidden="true" style={{ transform: `rotate(${TURN[way]}deg)` }}>
+      <path d="M2.5 1 L5.5 4 L2.5 7" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 /** The arrow always points the way the panel would travel. */
-const ARROW: Record<PanelSide, { open: string; closed: string }> = {
-  left: { open: '‹', closed: '›' },
-  right: { open: '›', closed: '‹' },
+const ARROW: Record<PanelSide, { open: Way; closed: Way }> = {
+  left: { open: 'left', closed: 'right' },
+  right: { open: 'right', closed: 'left' },
 }
 
 /** The fold/unfold handle, pinned to the middle of the panel's inner edge.
@@ -30,7 +44,7 @@ function PanelToggle({ side }: { side: PanelSide }) {
       aria-label={`${open ? 'hide' : 'show'} ${LABEL[side]} panel`}
       aria-expanded={open}
     >
-      {open ? ARROW[side].open : ARROW[side].closed}
+      <Chevron way={open ? ARROW[side].open : ARROW[side].closed} />
     </button>
   )
 }
@@ -49,7 +63,7 @@ function DrawerToggle() {
       aria-label={`${open ? 'hide' : 'show'} the bottom panel`}
       aria-expanded={open}
     >
-      <span className="panel-toggle-turned">{open ? '›' : '‹'}</span>
+      <Chevron way={open ? 'down' : 'up'} />
     </button>
   )
 }

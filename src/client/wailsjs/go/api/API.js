@@ -34,6 +34,10 @@ export function ExportTemplate(arg1) {
   return window['go']['api']['API']['ExportTemplate'](arg1);
 }
 
+export function GenerateTopology(arg1, arg2) {
+  return window['go']['api']['API']['GenerateTopology'](arg1, arg2);
+}
+
 export function GetContainerLogs(arg1, arg2) {
   return window['go']['api']['API']['GetContainerLogs'](arg1, arg2);
 }
@@ -68,6 +72,10 @@ export function GetRuntimeStatus() {
 
 export function GetUserTemplates() {
   return window['go']['api']['API']['GetUserTemplates']();
+}
+
+export function ImportTemplate() {
+  return window['go']['api']['API']['ImportTemplate']();
 }
 
 export function InjectFault(arg1, arg2, arg3) {

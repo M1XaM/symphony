@@ -113,6 +113,7 @@ function Builder() {
   const saveTemplate = useSymphonyStore((s) => s.saveTemplate)
   const cancelTemplate = useSymphonyStore((s) => s.cancelTemplate)
   const generateDraft = useSymphonyStore((s) => s.generateDraft)
+  const importDraft = useSymphonyStore((s) => s.importDraft)
   // the middle of the scale until it is moved; moving it draws a topology
   const [style, setStyle] = useState(STYLE_STEPS / 2)
 
@@ -160,7 +161,7 @@ function Builder() {
             onChange={(e) => {
               const v = Number(e.target.value)
               setStyle(v)
-              generateDraft(v / STYLE_STEPS)
+              void generateDraft(v / STYLE_STEPS)
             }}
           />
           <div className="style-ends">
@@ -169,6 +170,14 @@ function Builder() {
           </div>
         </div>
         <div className="palette-help">every move of the slider draws a new random topology, leaning to the side it is nearer; add to it or change it afterwards</div>
+
+        <div className="section-title">Import</div>
+        <div className="field">
+          <button type="button" className="btn btn-import" onClick={() => void importDraft()}>
+            Import from a file…
+          </button>
+        </div>
+        <div className="palette-help">puts a template exported earlier (a JSON file) on the map, to change and save as a new one</div>
       </div>
 
       <div className="left-foot left-foot-split">

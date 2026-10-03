@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"math/rand"
 	"time"
 
 	"symphony/engine/spec"
@@ -90,6 +91,30 @@ func cmdSave(e *env, args []string) error {
 	}
 	fmt.Fprintf(e.out, "saved template %q\n", t.Name)
 	return nil
+}
+
+func cmdGenerate(e *env, args []string) error {
+	fset := flag.NewFlagSet("generate", flag.ContinueOnError)
+	bias := fset.Float64("bias", 0.5, "")
+	name := fset.String("name", "Generated", "")
+	seed := fset.Int64("seed", 0, "")
+	pos, err := parse(fset, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) > 0 {
+		return usagef("takes no arguments")
+	}
+	if *bias < 0 || *bias > 1 {
+		return usagef("--bias is between 0 and 1")
+	}
+	if !spec.ValidName(*name) || *name == "" {
+		return usagef("--name takes English letters, digits, spaces and special characters")
+	}
+	if *seed == 0 {
+		*seed = time.Now().UnixNano()
+	}
+	return e.printJSON(spec.Generate(*bias, *name, rand.New(rand.NewSource(*seed))))
 }
 
 func cmdDelete(e *env, args []string) error {

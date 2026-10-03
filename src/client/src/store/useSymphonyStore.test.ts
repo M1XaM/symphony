@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { EMPTY_TOPOLOGY } from '../types/topology'
 import { newDeployment } from './deployments'
-import { selectIsApplied, selectPhase, selectSelectedNode, selectStatuses, useSymphonyStore } from './useSymphonyStore'
+import { selectIsApplied, selectPhase, selectSelectedNode, selectStatuses, selectUnsaved, useSymphonyStore } from './useSymphonyStore'
 
 const initial = useSymphonyStore.getState()
 
@@ -112,5 +112,48 @@ describe('selectors', () => {
     useSymphonyStore.setState({ deployments: { demo: newDeployment('demo', 'running') } })
     expect(selectIsApplied(useSymphonyStore.getState())).toBe(true)
     expect(selectPhase(useSymphonyStore.getState())).toBe('running')
+  })
+})
+
+describe('saving changes to a template', () => {
+  const template = { ...EMPTY_TOPOLOGY, name: 'mine' }
+
+  it('offers Save once a loaded template is changed, and saves it in place', async () => {
+    useSymphonyStore.setState({ userTemplates: [template] })
+    useSymphonyStore.getState().loadTemplate('mine')
+    expect(selectUnsaved(useSymphonyStore.getState())).toBe(false)
+
+    useSymphonyStore.getState().addNode('service', { x: 1, y: 2 })
+    expect(selectUnsaved(useSymphonyStore.getState())).toBe(true)
+
+    await useSymphonyStore.getState().saveChanges()
+    const s = useSymphonyStore.getState()
+    expect(s.userTemplates.map((t) => t.name)).toEqual(['mine'])
+    expect(s.userTemplates[0].nodes.map((n) => n.id)).toEqual(['service'])
+    expect(selectUnsaved(s)).toBe(false)
+  })
+
+  it('saves a changed built-in template as a copy and leaves the original alone', async () => {
+    useSymphonyStore.setState({ presets: [{ ...template, name: 'Built-in' }] })
+    useSymphonyStore.getState().loadTemplate('Built-in')
+    useSymphonyStore.getState().addNode('service', { x: 1, y: 2 })
+
+    await useSymphonyStore.getState().saveChanges()
+    const s = useSymphonyStore.getState()
+    expect(s.presets[0].nodes).toEqual([])
+    expect(s.userTemplates.map((t) => t.name)).toEqual(['Built-in-2'])
+    expect(s.topology.name).toBe('Built-in-2')
+    expect(selectUnsaved(s)).toBe(false)
+  })
+
+  it('does not offer it for a topology that is no template, or while one is being built', () => {
+    useSymphonyStore.getState().addNode('service', { x: 1, y: 2 })
+    expect(selectUnsaved(useSymphonyStore.getState())).toBe(false)
+
+    useSymphonyStore.setState({ userTemplates: [template] })
+    useSymphonyStore.getState().startTemplate()
+    useSymphonyStore.getState().setName('mine')
+    useSymphonyStore.getState().addNode('service', { x: 1, y: 2 })
+    expect(selectUnsaved(useSymphonyStore.getState())).toBe(false)
   })
 })

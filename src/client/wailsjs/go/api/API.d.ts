@@ -26,6 +26,8 @@ export function ExportRunReport(arg1:string,arg2:string):Promise<api.ExportResul
 
 export function ExportTemplate(arg1:spec.Topology):Promise<api.ExportResult>;
 
+export function GenerateTopology(arg1:number,arg2:string):Promise<spec.Topology>;
+
 export function GetContainerLogs(arg1:string,arg2:number):Promise<Array<events.LogPayload>>;
 
 export function GetDeployments():Promise<Array<core.DeploymentInfo>>;
@@ -43,6 +45,8 @@ export function GetRun(arg1:string):Promise<tests.Run>;
 export function GetRuntimeStatus():Promise<events.RuntimeStatusPayload>;
 
 export function GetUserTemplates():Promise<Array<spec.Topology>>;
+
+export function ImportTemplate():Promise<api.ImportResult>;
 
 export function InjectFault(arg1:string,arg2:string,arg3:spec.FaultSpec):Promise<void>;
 

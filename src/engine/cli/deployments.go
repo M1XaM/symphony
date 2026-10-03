@@ -370,12 +370,33 @@ func cmdControl(e *env, args []string) error {
 func cmdLogs(e *env, args []string) error {
 	fset := flag.NewFlagSet("logs", flag.ContinueOnError)
 	n := fset.Int("n", 100, "")
+	container := fset.String("container", "", "")
 	pos, err := parse(fset, args)
 	if err != nil {
 		return err
 	}
+	if *container != "" {
+		if len(pos) > 0 {
+			return usagef("--container takes the place of a deployment and a node")
+		}
+		lines, err := e.a.GetContainerLogs(*container, *n)
+		if err != nil {
+			return err
+		}
+		if e.json {
+			return e.printJSON(lines)
+		}
+		for _, l := range lines {
+			ts := "            "
+			if l.Ts > 0 {
+				ts = time.UnixMilli(l.Ts).Format("15:04:05.000")
+			}
+			fmt.Fprintf(e.out, "%s %-5s %s\n", ts, strings.ToUpper(l.Level), l.Message)
+		}
+		return nil
+	}
 	if len(pos) != 2 {
-		return usagef("needs a deployment and a node")
+		return usagef("needs a deployment and a node, or --container")
 	}
 	d, err := e.deployment(pos[0])
 	if err != nil {

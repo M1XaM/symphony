@@ -30,6 +30,20 @@ func init() {
 			help:     "save a topology JSON file (- reads stdin) as a template\nA template of the same name is replaced.",
 			flags:    []flagDoc{{"--name", "NAME", "save it under this name instead of the one in the file"}},
 			examples: []string{`symphony-cli save my-system.json --name "My system"`}},
+		{name: "generate", args: "[--bias N] [--name NAME] [--seed N]", group: "Topologies", standalone: true, run: cmdGenerate,
+			help: "print a random saga topology as JSON\n" +
+				"What the window's Generate slider draws. The bias runs from 0 (orchestration: every\n" +
+				"step is called, no broker) to 1 (choreography: every step reacts to an event, six\n" +
+				"brokers); the number of brokers grows evenly in between, one per service that is\n" +
+				"listened to. Size and shape are drawn anew on every call, laid out left to right as a\n" +
+				"tree. Give the output to save, validate, plan or apply.",
+			flags: []flagDoc{
+				{"--bias", "N", "0 = orchestration ... 1 = choreography (default 0.5)"},
+				{"--name", "NAME", "the topology's name (default \"Generated\")"},
+				{"--seed", "N", "draw the same topology again (default: a new one every time)"}},
+			examples: []string{
+				`symphony-cli generate --bias 0.8 --name "Event mesh" > mesh.json`,
+				`symphony-cli generate --bias 0.2 | symphony-cli save - --name "Small orchestration"`}},
 		{name: "delete", args: "<template>", group: "Topologies", run: cmdDelete, changes: true,
 			help:     "delete a saved template",
 			examples: []string{`symphony-cli delete "My system"`}},
@@ -106,10 +120,16 @@ func init() {
 			examples: []string{
 				`symphony-cli control "Orchestration (saga)" gateway sagas.summary`,
 				`symphony-cli control "Orchestration (saga)" payment ops`}},
-		{name: "logs", args: "<deployment> <node> [-n LINES]", group: "Deployments", docker: needDocker, run: cmdLogs,
-			help:     "a node's recent log lines",
-			flags:    []flagDoc{{"-n", "LINES", "how many lines (default 100)"}},
-			examples: []string{`symphony-cli logs "Orchestration (saga)" orchestrator -n 50`}},
+		{name: "logs", args: "<deployment> <node> | --container NAME [-n LINES]", group: "Deployments", docker: needDocker, run: cmdLogs,
+			help: "a node's recent log lines, or one container's\n" +
+				"With --container: what that one container has written (docker logs), which is what the\n" +
+				"window's Log tab shows for it; ps lists the names.",
+			flags: []flagDoc{
+				{"--container", "NAME", "one of Symphony's containers, in place of a deployment and a node"},
+				{"-n", "LINES", "how many lines (default 100)"}},
+			examples: []string{
+				`symphony-cli logs "Orchestration (saga)" orchestrator -n 50`,
+				`symphony-cli logs --container orchestration-saga-payment-1`}},
 		{name: "top", args: "[deployment] [--count N]", group: "Deployments", docker: needDocker, run: cmdTop,
 			blocks: "until Ctrl-C, unless --count is given",
 			help:   "live run metrics, one line a second, for one deployment or all of them\nsagas/s, p50 and p99 latency, failure rate, consumer lag, CPU, active faults.",

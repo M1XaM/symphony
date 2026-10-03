@@ -47,6 +47,11 @@ function panelInsets() {
   }
 }
 
+/** How often, and how many times, a swapped-in topology is looked at before
+ *  it is fitted measured or not. */
+const FIT_WAIT_MS = 30
+const FIT_TRIES = 30
+
 const nodeTypes: NodeTypes = {
   service: TopologyNodeView,
   broker: TopologyNodeView,
@@ -95,7 +100,7 @@ export function Canvas() {
   const addEdge = useSymphonyStore((s) => s.addEdge)
   const addNode = useSymphonyStore((s) => s.addNode)
   const select = useSymphonyStore((s) => s.select)
-  const { screenToFlowPosition, fitView, setViewport } = useReactFlow()
+  const { screenToFlowPosition, fitView, setViewport, getInternalNode } = useReactFlow()
   const paneRef = useRef<HTMLDivElement>(null)
 
   // Mark the whole app while the map is being moved, so the live-edge dash
@@ -205,10 +210,21 @@ export function Canvas() {
     })
   }, [fitView, setViewport])
 
+  // A swapped-in topology is fitted once React Flow has measured its nodes:
+  // fitted any sooner, the view would frame the graph that was there before.
+  // (useNodesInitialized cannot say when: it reads the sizes off the nodes
+  // handed in, and those never carry any.) It gives up waiting after a second.
   useEffect(() => {
-    const id = window.setTimeout(fitToClearArea, 30)
+    let tries = 0
+    let id = 0
+    const attempt = () => {
+      const all = useSymphonyStore.getState().topology.nodes
+      if (++tries > FIT_TRIES || all.every((n) => getInternalNode(n.id)?.measured.width)) fitToClearArea()
+      else id = window.setTimeout(attempt, FIT_WAIT_MS)
+    }
+    id = window.setTimeout(attempt, FIT_WAIT_MS)
     return () => window.clearTimeout(id)
-  }, [loadSeq, fitToClearArea])
+  }, [loadSeq, fitToClearArea, getInternalNode])
 
   const onNodesChange = useCallback(
     (changes: NodeChange<RFNode>[]) => {

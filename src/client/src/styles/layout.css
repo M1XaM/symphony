@@ -137,9 +137,8 @@
   transform: translateX(-50%);
 }
 
-.panel-toggle-turned {
+.chevron {
   display: block;
-  transform: rotate(90deg);
 }
 
 /* a folded panel takes no column, so the map (and the zoom controls, which

@@ -99,6 +99,12 @@ func Run(opts Options) error {
 					Filters:         []wailsrt.FileFilter{{DisplayName: strings.ToUpper(format) + " (*." + format + ")", Pattern: "*." + format}},
 				})
 			})
+			api.SetOpenDialog(b.API, func(format string) (string, error) {
+				return wailsrt.OpenFileDialog(ctx, wailsrt.OpenDialogOptions{
+					Title:   "Open",
+					Filters: []wailsrt.FileFilter{{DisplayName: strings.ToUpper(format) + " (*." + format + ")", Pattern: "*." + format}},
+				})
+			})
 			b.Start(ctx, func(name string, payload any) { wailsrt.EventsEmit(ctx, name, payload) })
 		},
 		OnShutdown: func(ctx context.Context) {

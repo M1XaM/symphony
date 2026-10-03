@@ -69,6 +69,15 @@ export const backend = {
     const res = await API.ExportTemplate(toWireTopology(t))
     return { path: res.path, cancelled: res.cancelled }
   },
+  /** Ask which file to read a template from; null when cancelled. */
+  async importTemplate(): Promise<Topology | null> {
+    const res = await API.ImportTemplate()
+    return res.cancelled ? null : fromWireTopology(res.topology)
+  },
+  /** A random saga topology: bias 0 leans to orchestration, 1 to choreography. */
+  async generateTopology(bias: number, name: string): Promise<Topology> {
+    return fromWireTopology(await API.GenerateTopology(bias, name))
+  },
   async getLogHistory(): Promise<LogEvent[]> {
     const lines = await API.GetLogHistory()
     return lines.map((l) => ({

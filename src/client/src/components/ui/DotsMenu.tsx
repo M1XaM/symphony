@@ -21,7 +21,6 @@ export function DotsMenu({ label, items, disabled }: { label: string; items: Men
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={label}
-        title={open ? undefined : label}
         disabled={disabled}
         onClick={() => setOpen(!open)}
       >

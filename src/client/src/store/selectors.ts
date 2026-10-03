@@ -1,5 +1,37 @@
-import type { ContainerStatsEvent, LinkHealthEntry, MetricsEvent, NodeStatus, Phase, TopologyEdge, TopologyNode } from '../types/topology'
+import type { ContainerStatsEvent, LinkHealthEntry, MetricsEvent, NodeStatus, Phase, Topology, TopologyEdge, TopologyNode } from '../types/topology'
 import type { Deployment, SimSample, SymphonyState } from './types'
+
+/** A topology as text that reads the same however its keys are ordered. */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>
+    return `{${Object.keys(o)
+      .filter((k) => o[k] !== undefined)
+      .sort()
+      .map((k) => `${k}:${canonical(o[k])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(v)
+}
+
+let unsavedFor: [Topology, Topology] | null = null
+let unsavedIs = false
+
+/** True when the canvas shows a template that was changed since it was
+ *  loaded: an element added, moved, connected or reconfigured. Not while a new
+ *  template is being built; that has its own Save. */
+export function selectUnsaved(s: SymphonyState): boolean {
+  if (s.draft) return false
+  const template = s.userTemplates.find((t) => t.name === s.topology.name) ?? s.presets.find((t) => t.name === s.topology.name)
+  if (!template) return false
+  // the store is updated many times a second; the comparison runs once per change
+  if (unsavedFor?.[0] !== s.topology || unsavedFor[1] !== template) {
+    unsavedFor = [s.topology, template]
+    unsavedIs = canonical(s.topology) !== canonical(template)
+  }
+  return unsavedIs
+}
 
 /** Shared empty maps, so selectors on a non-applied topology keep a stable reference. */
 const NO_STATUSES: Record<string, NodeStatus> = {}

@@ -182,7 +182,12 @@ export interface LibrarySlice {
   exportTemplate(name: string): Promise<void>
   /** While building a template: replace the canvas with a random topology
    *  that leans towards orchestration (0) or choreography (1). */
-  generateDraft(bias: number): void
+  generateDraft(bias: number): Promise<void>
+  /** While building a template: put an exported template on the canvas. */
+  importDraft(): Promise<void>
+  /** Save what was changed on the canvas into the template it came from; a
+   *  built-in one cannot be changed, so it is saved as a copy. */
+  saveChanges(): Promise<void>
 }
 
 /** The Tests and Runs tabs. */

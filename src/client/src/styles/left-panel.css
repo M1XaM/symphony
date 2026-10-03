@@ -303,3 +303,8 @@
   font-size: 11px;
   color: var(--fg-muted);
 }
+
+.btn-import {
+  width: 100%;
+  justify-content: center;
+}
