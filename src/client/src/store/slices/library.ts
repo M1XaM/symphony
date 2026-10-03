@@ -1,6 +1,7 @@
-import { backend } from '../../lib/backend'
+import { backend, errorMessage, hasBackend } from '../../lib/backend'
 import { SCHEMA_VERSION } from '../../types/topology'
 import { clone, uniqueId } from '../editing'
+import { generateTopology } from '../generate'
 import { persistTemplates, readTemplates } from '../templates'
 import type { LibrarySlice, Slice } from '../types'
 
@@ -66,5 +67,29 @@ export const createLibrarySlice: Slice<LibrarySlice> = (set, get) => ({
     set({ userTemplates })
     get().appendLog({ ts: Date.now(), level: 'info', source: 'ui', message: `deleted template "${name}"` })
     await persistTemplates(set, get, userTemplates, () => backend.deleteUserTemplate(name))
+  },
+
+  async exportTemplate(name) {
+    const { presets, userTemplates } = get()
+    const template = presets.find((p) => p.name === name) ?? userTemplates.find((t) => t.name === name)
+    if (!template || !hasBackend()) return
+    try {
+      await backend.exportTemplate(template)
+    } catch (err) {
+      get().appendLog({ ts: Date.now(), level: 'error', source: 'library', message: `export of "${name}": ${errorMessage(err)}` })
+    }
+  },
+
+  generateDraft(bias) {
+    if (!get().draft) return
+    set((s) => ({
+      topology: generateTopology(bias, s.topology.name),
+      loadSeq: s.loadSeq + 1,
+      selectedNodeId: null,
+      selectedEdgeId: null,
+      plan: null,
+      opStatus: {},
+      validation: [],
+    }))
   },
 })

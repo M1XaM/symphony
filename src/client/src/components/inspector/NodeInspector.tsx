@@ -4,6 +4,7 @@ import { selectContainers, selectDockerUp, selectIsApplied, selectStatuses, useS
 import type { TopologyNode } from '../../types/topology'
 import { ConfigField } from '../HotField'
 import { StatusDot } from '../StatusDot'
+import { NumberInput } from '../ui/NumberInput'
 import { HealthChecks } from './HealthChecks'
 import { LoadPanel } from './LoadPanel'
 import { NODE_FAULTS } from './faults'
@@ -35,14 +36,12 @@ function ResourceSlider({
       </label>
       <div className="field-num">
         <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
-        <input
-          type="number"
-          className="input input-num"
+        <NumberInput
+          className="input-num"
           min={0}
           step={step}
           value={value}
-          onChange={(e) => {
-            const n = Number(e.target.value)
+          onValue={(n) => {
             if (!Number.isNaN(n) && n >= 0) onChange(n)
           }}
         />
@@ -80,8 +79,7 @@ export const NodeInspector = memo(function NodeInspector({ node }: { node: Topol
   const removeNodes = useSymphonyStore((s) => s.removeNodes)
   const injectFault = useSymphonyStore((s) => s.injectFault)
   const clearFaults = useSymphonyStore((s) => s.clearFaults)
-  const setLogsNode = useSymphonyStore((s) => s.setLogsNode)
-  const setDrawer = useSymphonyStore((s) => s.setDrawer)
+  const showNodeLogs = useSymphonyStore((s) => s.showNodeLogs)
 
   const hotKeys = Object.keys(node.config.hot).sort()
   const coldKeys = Object.keys(node.config.cold).sort()
@@ -99,10 +97,7 @@ export const NodeInspector = memo(function NodeInspector({ node }: { node: Topol
           <button
             type="button"
             className="btn btn-ghost btn-small"
-            onClick={() => {
-              setLogsNode(node.id)
-              setDrawer(true, 'logs')
-            }}
+            onClick={() => void showNodeLogs(node.id)}
           >
             logs
           </button>
@@ -124,14 +119,7 @@ export const NodeInspector = memo(function NodeInspector({ node }: { node: Topol
         <label className="field-label">
           replicas <span className="tag tag-cold">requires restart</span>
         </label>
-        <input
-          className="input input-num"
-          type="number"
-          min={1}
-          max={16}
-          value={node.replicas}
-          onChange={(e) => updateNode(node.id, { replicas: Math.max(1, Number(e.target.value) || 1) })}
-        />
+        <NumberInput className="input-num" min={1} max={16} value={node.replicas} onValue={(n) => updateNode(node.id, { replicas: Math.max(1, n || 1) })} />
       </div>
 
       {running ? (

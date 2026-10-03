@@ -81,7 +81,7 @@ func New(opts Options) (*Backend, error) {
 		libPath = filepath.Join(configDir, library.FileName)
 	}
 	b.Library = library.New(libPath)
-	b.API = api.New(api.Deps{Engine: b.Engine, Bus: b.Bus, Library: b.Library, Host: b.Host, Tests: b.Tests, Logs: b.Logs})
+	b.API = api.New(api.Deps{Engine: b.Engine, Bus: b.Bus, Library: b.Library, Host: b.Host, Tests: b.Tests})
 	return b, nil
 }
 
@@ -116,8 +116,9 @@ func (b *Backend) dockerChanged(ctx context.Context, up bool, detail string, res
 // Start runs everything the desktop app keeps running for its session: the
 // Docker watcher (without a daemon the app still opens, says so, and picks
 // Docker and the stored deployments up as soon as it answers), the engine's
-// health poller, metrics, host stats and the container log mirror. emit
-// receives every event.
+// health poller, metrics and host stats. emit receives every event. The
+// container log mirror is not part of it: the window reads a container's log
+// when its Log tab asks for it, and only `symphony-cli log` follows them.
 func (b *Backend) Start(ctx context.Context, emit func(name string, payload any)) {
 	api.Startup(b.API, ctx, emit)
 	up := b.Connect(ctx, true)
@@ -125,7 +126,6 @@ func (b *Backend) Start(ctx context.Context, emit func(name string, payload any)
 	b.Engine.Start(ctx)
 	b.Metrics.Start(ctx)
 	b.Host.Start(ctx)
-	b.Logs.Start(ctx)
 }
 
 // Close stops whatever runs and releases Docker and the database.

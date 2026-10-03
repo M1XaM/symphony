@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import type { Topology, TopologyNode } from '../types/topology'
-import { clone, inferEdge, uniqueId } from './editing'
+import { asciiName, clone, inferEdge, uniqueId } from './editing'
 
 function node(id: string, kind: TopologyNode['kind']): TopologyNode {
   return { id, kind, image: '', replicas: 1, position: { x: 0, y: 0 }, config: { hot: {}, cold: {} }, resources: {} }
 }
+
+describe('asciiName', () => {
+  it('keeps English letters, digits, spaces and special characters', () => {
+    expect(asciiName('Fan-out saga (v2) #1!')).toBe('Fan-out saga (v2) #1!')
+  })
+
+  it('drops everything else', () => {
+    expect(asciiName('Сага café\t→ 2')).toBe(' caf 2')
+  })
+})
 
 describe('uniqueId', () => {
   it('keeps a free name and numbers a taken one from 2', () => {

@@ -1,38 +1,35 @@
+import { useState } from 'react'
 import { useSymphonyStore } from '../store/useSymphonyStore'
 import type { Topology } from '../types/topology'
 import { Palette } from './Palette'
+import { DotsMenu, type MenuItem } from './ui/DotsMenu'
 
 function TemplateRow({ template, custom }: { template: Topology; custom: boolean }) {
   const isActive = useSymphonyStore((s) => s.topology.name === template.name)
   // Live against the engine, which is a different thing from being on the
   // canvas: any number of templates can run while you look at another one.
   const phase = useSymphonyStore((s) => s.deployments[template.name]?.phase)
-  const isLive = phase !== undefined
   const loadTemplate = useSymphonyStore((s) => s.loadTemplate)
   const deleteTemplate = useSymphonyStore((s) => s.deleteTemplate)
+  const exportTemplate = useSymphonyStore((s) => s.exportTemplate)
+
+  // the built-in templates cannot be deleted
+  const items: MenuItem[] = [{ label: 'Export template', onSelect: () => void exportTemplate(template.name) }]
+  if (custom) items.push({ label: 'Delete', danger: true, onSelect: () => void deleteTemplate(template.name) })
 
   return (
     <div className={`template-row${isActive ? ' is-active' : ''}`}>
       <button type="button" className="template-item" onClick={() => loadTemplate(template.name)}>
-        <span className="template-head">
-          <span className="template-name">{template.name}</span>
-          {isLive ? <span className={`live-dot live-dot-${phase}`} title={phase.replace('_', ' ')} aria-label={phase} /> : null}
-        </span>
+        <span className="template-name">{template.name}</span>
         <span className="template-meta">
           {template.nodes.length} nodes · {template.edges.length} edges{custom ? ' · custom' : ''}
         </span>
       </button>
-      {custom ? (
-        <button
-          type="button"
-          className="template-del"
-          title={`delete "${template.name}"`}
-          aria-label={`delete ${template.name}`}
-          onClick={() => deleteTemplate(template.name)}
-        >
-          ×
-        </button>
-      ) : null}
+      {/* always there, lit or not, so the dot sits at the same place on every card */}
+      <span className="template-live">
+        {phase !== undefined ? <span className={`live-dot live-dot-${phase}`} title={phase.replace('_', ' ')} aria-label={phase} /> : null}
+      </span>
+      <DotsMenu label={`more for ${template.name}`} items={items} />
     </div>
   )
 }
@@ -105,6 +102,9 @@ function Browser() {
   )
 }
 
+/** How many places the generator's slider has between its two ends. */
+const STYLE_STEPS = 50
+
 /** Build state: name it, drag it together on the cleared canvas, save it. */
 function Builder() {
   const name = useSymphonyStore((s) => s.topology.name)
@@ -112,6 +112,9 @@ function Builder() {
   const nodeCount = useSymphonyStore((s) => s.topology.nodes.length)
   const saveTemplate = useSymphonyStore((s) => s.saveTemplate)
   const cancelTemplate = useSymphonyStore((s) => s.cancelTemplate)
+  const generateDraft = useSymphonyStore((s) => s.generateDraft)
+  // the middle of the scale until it is moved; moving it draws a topology
+  const [style, setStyle] = useState(STYLE_STEPS / 2)
 
   const canSave = name.trim().length > 0 && nodeCount > 0
 
@@ -137,11 +140,35 @@ function Builder() {
             autoFocus
             onChange={(e) => setName(e.target.value)}
           />
+          <div className="field-note">English letters, digits and special characters</div>
         </div>
 
         <div className="section-title">Elements</div>
         <Palette />
         <div className="palette-help">the canvas is cleared — drag elements onto it and connect their handles</div>
+
+        <div className="section-title">Generate</div>
+        <div className="field">
+          <input
+            type="range"
+            className="style-slider"
+            min={0}
+            max={STYLE_STEPS}
+            step={1}
+            value={style}
+            aria-label="generate a topology, from orchestration to choreography"
+            onChange={(e) => {
+              const v = Number(e.target.value)
+              setStyle(v)
+              generateDraft(v / STYLE_STEPS)
+            }}
+          />
+          <div className="style-ends">
+            <span>orchestration</span>
+            <span>choreography</span>
+          </div>
+        </div>
+        <div className="palette-help">every move of the slider draws a new random topology, leaning to the side it is nearer; add to it or change it afterwards</div>
       </div>
 
       <div className="left-foot left-foot-split">

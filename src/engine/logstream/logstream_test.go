@@ -41,6 +41,19 @@ func TestParseKeepsWhatItCannotRead(t *testing.T) {
 	}
 }
 
+func TestEntryKeepsTheBlocksTime(t *testing.T) {
+	e := Entry("demo-payment", `{"time":"2026-10-03T10:00:00.5Z","level":"WARN","msg":"slow","node":"payment","ms":12}`)
+	if e.Level != "warn" || e.Source != "demo-payment" || e.Message != "slow ms=12" {
+		t.Fatalf("entry = %+v", e)
+	}
+	if want := time.Date(2026, 10, 3, 10, 0, 0, 500e6, time.UTC).UnixMilli(); e.Ts != want {
+		t.Fatalf("ts = %d, want %d", e.Ts, want)
+	}
+	if e := Entry("demo-payment", "panic: boom"); e.Ts != 0 || e.Message != "panic: boom" {
+		t.Fatalf("plain line = %+v", e)
+	}
+}
+
 func TestLimiterThrottlesAndSaysSo(t *testing.T) {
 	l := &limiter{tokens: 2, last: time.Now()}
 	for i := 0; i < 2; i++ {

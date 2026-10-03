@@ -9,8 +9,6 @@ import type {
   HostStatsEvent,
   LinkHealthEntry,
   LogEvent,
-  LogLine,
-  LogStreamState,
   MetricsEvent,
   NodeKind,
   NodeStatus,
@@ -39,7 +37,7 @@ export interface LogLineEntry {
   message: string
 }
 
-export type DrawerTab = 'plan' | 'stats' | 'containers' | 'logs' | 'log' | 'tests'
+export type DrawerTab = 'plan' | 'stats' | 'containers' | 'log' | 'tests' | 'runs'
 
 /** The two floating panels that can be folded away to clear the map. */
 export type PanelSide = 'left' | 'right'
@@ -132,12 +130,19 @@ export interface PanelsSlice {
   log: LogLineEntry[]
   drawerOpen: boolean
   drawerTab: DrawerTab
+  /** Height of the open drawer in px; dragged by its top edge. */
+  drawerHeight: number
   /** Folded-away side panels; only their reopen arrow stays on screen. */
   panelOpen: Record<PanelSide, boolean>
   leftTab: LeftTab
-  /** Logs tab: which node and what it said. */
-  logsNode: string | null
-  nodeLogs: LogLine[]
+  /** Log tab: whose lines it shows. '' is the engine's own log ("System"),
+   *  anything else the name of one of Symphony's containers. */
+  logSource: string
+  /** The containers the Log tab offers, from its own sweep. */
+  logContainers: ContainerRow[]
+  /** What the picked container has written, as `docker logs` has it. */
+  containerLog: LogLineEntry[]
+  containerLogError: string | null
   /** Containers tab: the last `docker ps` sweep. */
   containers: ContainerRow[]
   /** How many of them are running, kept with the rows so the tab badge is a
@@ -145,17 +150,18 @@ export interface PanelsSlice {
   containersRunning: number
   containersAll: boolean
   containersError: string | null
-  /** Whether container output is mirrored into the Log tab. */
-  logStream: LogStreamState
 
-  setLogsNode(id: string | null): void
-  refreshLogs(): Promise<void>
+  setLogSource(name: string): void
+  refreshLogContainers(): Promise<void>
+  refreshContainerLog(): Promise<void>
+  /** Open the Log tab on the first container of a node of the canvas topology. */
+  showNodeLogs(nodeId: string): Promise<void>
   refreshContainers(): Promise<void>
   setContainersAll(all: boolean): void
-  setLogStream(on: boolean): Promise<void>
   appendLog(line: Omit<LogLineEntry, 'id'>): void
   clearLog(): void
   setDrawer(open: boolean, tab?: DrawerTab): void
+  setDrawerHeight(px: number): void
   togglePanel(side: PanelSide): void
   setLeftTab(tab: LeftTab): void
 }
@@ -172,9 +178,14 @@ export interface LibrarySlice {
   saveTemplate(): Promise<void>
   cancelTemplate(): void
   deleteTemplate(name: string): Promise<void>
+  /** Write a template to a JSON file the user picks. */
+  exportTemplate(name: string): Promise<void>
+  /** While building a template: replace the canvas with a random topology
+   *  that leans towards orchestration (0) or choreography (1). */
+  generateDraft(bias: number): void
 }
 
-/** The Tests tab. */
+/** The Tests and Runs tabs. */
 export interface TestsSlice {
   scenarios: Scenario[]
   runs: RunSummary[]

@@ -44,6 +44,15 @@ func TestValidateIDs(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsNonASCIIName(t *testing.T) {
+	for name, want := range map[string]bool{"Fan-out saga (v2) #1!": true, "Сага": false, "saga\tone": false, "café": false} {
+		topo := Topology{Version: CurrentVersion, Name: name, Nodes: []Node{NewNode("gateway", KindInfra, Position{})}}
+		if got := !HasErrors(topo.Validate()); got != want {
+			t.Errorf("name %q: valid = %v, want %v", name, got, want)
+		}
+	}
+}
+
 // A node with replicas names its containers "<id>-<n>", which is also how
 // the canvas names the second node of a kind.
 func TestValidateReplicaNameClash(t *testing.T) {

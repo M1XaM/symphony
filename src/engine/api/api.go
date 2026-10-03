@@ -7,9 +7,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"symphony/blocks/common/control"
@@ -33,7 +35,6 @@ type API struct {
 	lib   *library.Library
 	host  *hoststats.Sampler
 	tests *tests.Runner
-	logs  *logstream.Streamer
 	ctx   context.Context
 	unsub func()
 
@@ -43,8 +44,8 @@ type API struct {
 	saveDialog SaveDialog
 }
 
-// SaveDialog asks where to save a file of the given kind ("md", "pdf"),
-// offering name. It returns "" when the user cancels.
+// SaveDialog asks where to save a file of the given kind ("md", "pdf",
+// "json"), offering name. It returns "" when the user cancels.
 type SaveDialog func(name, format string) (string, error)
 
 // SetSaveDialog gives the API the window's save dialog. A package function,
@@ -62,11 +63,10 @@ type Deps struct {
 	Library *library.Library
 	Host    *hoststats.Sampler
 	Tests   *tests.Runner
-	Logs    *logstream.Streamer
 }
 
 func New(d Deps) *API {
-	return &API{eng: d.Engine, bus: d.Bus, lib: d.Library, host: d.Host, tests: d.Tests, logs: d.Logs,
+	return &API{eng: d.Engine, bus: d.Bus, lib: d.Library, host: d.Host, tests: d.Tests,
 		docker: events.RuntimeStatusPayload{Detail: "checking for the Docker daemon"}}
 }
 
@@ -148,6 +148,53 @@ func (a *API) SaveUserTemplate(t spec.Topology) ([]spec.Topology, error) {
 // DeleteUserTemplate removes a saved template and returns what is left.
 func (a *API) DeleteUserTemplate(name string) ([]spec.Topology, error) {
 	return a.lib.Delete(name)
+}
+
+// ExportTemplate writes a template to a JSON file the user picks, in the
+// form `symphony-cli apply <file>` reads.
+func (a *API) ExportTemplate(t spec.Topology) (ExportResult, error) {
+	if a.saveDialog == nil {
+		return ExportResult{}, errors.New("no save dialog: templates are exported from the window, or with symphony-cli show <template>")
+	}
+	t = t.Normalized()
+	doc, err := json.MarshalIndent(t, "", "  ")
+	if err != nil {
+		return ExportResult{}, err
+	}
+	path, err := a.saveDialog(fileSlug(t.Name)+".json", "json")
+	if err != nil {
+		return ExportResult{}, err
+	}
+	if path == "" {
+		return ExportResult{Cancelled: true}, nil
+	}
+	if err := os.WriteFile(path, append(doc, '\n'), 0o644); err != nil {
+		return ExportResult{}, err
+	}
+	a.bus.Log("info", "library", fmt.Sprintf("template %q exported to %s", t.Name, path))
+	return ExportResult{Path: path}, nil
+}
+
+// fileSlug turns a template name into a file name: lower case, with every
+// run of anything but letters and digits as one dash.
+func fileSlug(name string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			if dash && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			dash = false
+			b.WriteRune(r)
+		} else {
+			dash = true
+		}
+	}
+	if b.Len() == 0 {
+		return "template"
+	}
+	return b.String()
 }
 
 // GetLogHistory returns the log lines emitted before the webview attached.
@@ -252,21 +299,46 @@ func (a *API) ListContainers(all bool) ([]runtime.HostContainer, error) {
 	return out, err
 }
 
-// ContainerLogStream reports whether container output is being mirrored into
-// the app log.
-func (a *API) ContainerLogStream() LogStreamState {
-	return LogStreamState{Enabled: a.logs.Enabled()}
-}
+// containerLogTail is how many lines of a container's log the Log tab reads
+// when it is asked for all of them.
+const containerLogTail = 2000
 
-// SetContainerLogStream turns the mirror on or off.
-func (a *API) SetContainerLogStream(on bool) LogStreamState {
-	a.logs.SetEnabled(on)
-	return a.ContainerLogStream()
-}
-
-// LogStreamState is the Log tab's view of the container log mirror.
-type LogStreamState struct {
-	Enabled bool `json:"enabled"`
+// GetContainerLogs returns the last n lines (0 = as many as the Log tab
+// keeps) one of Symphony's containers wrote: what `docker logs` prints for
+// it, each line parsed the way the blocks write them.
+func (a *API) GetContainerLogs(name string, n int) ([]events.LogPayload, error) {
+	if !a.dockerUp() {
+		return nil, ErrNoDocker
+	}
+	if n <= 0 || n > containerLogTail {
+		n = containerLogTail
+	}
+	rt := a.eng.Runtime()
+	cs, err := rt.ListHost(a.context(), true)
+	if err != nil {
+		return nil, err
+	}
+	ours := false
+	for _, c := range cs {
+		if c.Ours && c.Name == name {
+			ours = true
+			break
+		}
+	}
+	if !ours {
+		return nil, fmt.Errorf("%q is not one of Symphony's containers", name)
+	}
+	raw, err := rt.Logs(a.context(), name, n)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]events.LogPayload, 0, len(raw))
+	for _, line := range raw {
+		if line != "" {
+			out = append(out, logstream.Entry(name, line))
+		}
+	}
+	return out, nil
 }
 
 // --- tests --------------------------------------------------------------------

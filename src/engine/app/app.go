@@ -94,7 +94,7 @@ func Run(opts Options) error {
 		OnStartup: func(ctx context.Context) {
 			api.SetSaveDialog(b.API, func(name, format string) (string, error) {
 				return wailsrt.SaveFileDialog(ctx, wailsrt.SaveDialogOptions{
-					Title:           "Save the report",
+					Title:           "Save as",
 					DefaultFilename: name,
 					Filters:         []wailsrt.FileFilter{{DisplayName: strings.ToUpper(format) + " (*." + format + ")", Pattern: "*." + format}},
 				})

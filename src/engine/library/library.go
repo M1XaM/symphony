@@ -66,6 +66,9 @@ func (l *Library) Save(t spec.Topology) ([]spec.Topology, error) {
 	if saved.Name == "" {
 		return nil, errors.New("library: a template needs a name")
 	}
+	if !spec.ValidName(saved.Name) {
+		return nil, fmt.Errorf("library: template name %q: use English letters, digits, spaces and special characters only", saved.Name)
+	}
 	list, err := l.load()
 	if err != nil {
 		return nil, err

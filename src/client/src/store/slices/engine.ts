@@ -73,12 +73,6 @@ export const createEngineSlice: Slice<EngineSlice> = (set, get) => ({
     }
 
     try {
-      set({ logStream: await backend.containerLogStream() })
-    } catch (err) {
-      warn(get, 'logs', err)
-    }
-
-    try {
       set({ scenarios: await backend.listScenarios() })
       await get().refreshRuns()
     } catch (err) {

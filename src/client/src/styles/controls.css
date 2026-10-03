@@ -65,20 +65,312 @@
 
 .input-num {
   width: 82px;
+}
+
+/* A number field: the platform's spinner is hidden and the app's own two
+   buttons stand at its right edge. */
+.num {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.num-field {
+  padding-right: 20px;
   text-align: right;
   font-family: var(--mono);
   font-size: 12px;
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 
+.num-field::-webkit-inner-spin-button,
+.num-field::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.num-steps {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  display: flex;
+  flex-direction: column;
+  width: 15px;
+  border-left: 1px solid var(--line-strong);
+}
+
+.num-step {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  background: var(--bg-3);
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.num-step:first-child {
+  border-bottom: 1px solid var(--line-strong);
+  border-top-right-radius: 2px;
+}
+
+.num-step:last-child {
+  border-bottom-right-radius: 2px;
+}
+
+.num-step:hover {
+  background: var(--line-strong);
+  color: var(--fg);
+}
+
+.num-step:active {
+  background: var(--accent);
+  color: #fff;
+}
+
+.num-up,
+.num-down {
+  width: 0;
+  height: 0;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+}
+
+.num-up {
+  border-bottom: 4px solid currentColor;
+}
+
+.num-down {
+  border-top: 4px solid currentColor;
+}
+
+/* A slider: a thin track and a round thumb in the accent colour. */
 input[type='range'] {
   flex: 1;
   min-width: 0;
-  accent-color: var(--accent);
   height: 18px;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border: 2px solid var(--bg-1);
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+input[type='range']::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--line-strong);
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--bg-1);
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+input[type='range']:focus-visible {
+  outline: none;
+}
+
+input[type='range']:focus-visible::-webkit-slider-thumb {
+  border-color: var(--fg);
 }
 
 input[type='checkbox'] {
-  accent-color: var(--accent);
+  position: relative;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--bg-2);
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+input[type='checkbox']:hover:not(:disabled) {
+  border-color: var(--fg-dim);
+}
+
+input[type='checkbox']:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+input[type='checkbox']:checked::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 4px;
+  width: 4px;
+  height: 7px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+input[type='checkbox']:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* A dropdown: the closed field is one of the app's inputs with a chevron, and
+   its list is a popup (below). */
+.select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+  color: var(--fg);
+  text-align: left;
+  cursor: pointer;
+}
+
+.select:hover:not(:disabled) {
+  border-color: var(--fg-dim);
+}
+
+.select:focus-visible,
+.select.is-open {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.select:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.select-inline {
+  display: inline-flex;
+  width: auto;
+  max-width: 260px;
+  padding: 1px 6px;
+  vertical-align: middle;
+}
+
+.select-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-arrow {
+  flex-shrink: 0;
+  width: 0;
+  height: 0;
+  border-left: 3.5px solid transparent;
+  border-right: 3.5px solid transparent;
+  border-top: 4px solid var(--fg-muted);
+}
+
+/* The three dots at the end of a row. */
+.dots {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--fg-muted);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dots:hover:not(:disabled),
+.dots.is-open {
+  border-color: var(--line-strong);
+  background: var(--bg-3);
+  color: var(--fg);
+}
+
+.dots:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* What a dropdown or the dots open: a small vertical list, placed by
+   usePopup. No blur in the shadow; see --shadow. */
+.popup {
+  position: fixed;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 120px;
+  padding: 3px;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: var(--bg-2);
+  box-shadow: var(--shadow);
+}
+
+.popup-item {
+  padding: 4px 10px;
+  border: none;
+  border-radius: 3px;
+  background: none;
+  color: var(--fg);
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.popup-item:hover:not(:disabled),
+.popup-item:focus-visible {
+  background: var(--bg-3);
+  outline: none;
+}
+
+.popup-item.is-selected {
+  background: var(--accent-dim);
+}
+
+.popup-item.is-danger {
+  color: var(--err);
+}
+
+.popup-item:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .badge {

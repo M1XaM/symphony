@@ -175,7 +175,8 @@
 
 .template-row {
   display: flex;
-  align-items: stretch;
+  align-items: center;
+  padding-right: 4px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--bg-2);
@@ -202,21 +203,23 @@
   cursor: pointer;
 }
 
-.template-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  min-width: 0;
-}
-
 .template-name {
-  flex: 1;
-  min-width: 0;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
+}
+
+/* The live dot's place: a fixed slot between the text and the three dots,
+   kept when it is empty, so the dot is at the same spot on every card. */
+.template-live {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 20px;
 }
 
 /* the template the engine is actually running, whatever the canvas shows */
@@ -280,24 +283,23 @@
   color: var(--fg-muted);
 }
 
-.template-del {
-  flex-shrink: 0;
-  width: 22px;
-  border: none;
-  background: transparent;
+/* --- template builder ------------------------------------------------------ */
+
+.field-note {
+  margin-top: 3px;
+  font-size: 11px;
   color: var(--fg-dim);
-  font-size: 15px;
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 120ms ease;
 }
 
-.template-row:hover .template-del,
-.template-del:focus-visible {
-  opacity: 1;
+/* the generator's slider: fifty places, orchestration to choreography */
+.style-slider {
+  display: block;
+  width: 100%;
 }
 
-.template-del:hover {
-  color: var(--err);
+.style-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--fg-muted);
 }

@@ -15,8 +15,6 @@ import {
   type FaultSpec,
   type HostStatsEvent,
   type LogEvent,
-  type LogLine,
-  type LogStreamState,
   type Plan,
   type Resources,
   type Run,
@@ -66,6 +64,11 @@ export const backend = {
   async deleteUserTemplate(name: string): Promise<Topology[]> {
     return (await API.DeleteUserTemplate(name)).map(fromWireTopology)
   },
+  /** Ask where to save a template, then write it there as JSON. */
+  async exportTemplate(t: Topology): Promise<ExportResult> {
+    const res = await API.ExportTemplate(toWireTopology(t))
+    return { path: res.path, cancelled: res.cancelled }
+  },
   async getLogHistory(): Promise<LogEvent[]> {
     const lines = await API.GetLogHistory()
     return lines.map((l) => ({
@@ -106,20 +109,15 @@ export const backend = {
     const res = await API.ControlNode(deployment, nodeId, control.Command.createFrom(cmd))
     return JSON.parse(JSON.stringify(res)) as ControlResult
   },
-  async getNodeLogs(deployment: string, nodeId: string, n: number): Promise<LogLine[]> {
-    const lines = await API.GetNodeLogs(deployment, nodeId, n)
-    return JSON.parse(JSON.stringify(lines)) as LogLine[]
-  },
   /** `docker ps`: every container on the host (all = `docker ps -a`). */
   async listContainers(all: boolean): Promise<ContainerRow[]> {
     const rows = await API.ListContainers(all)
     return JSON.parse(JSON.stringify(rows)) as ContainerRow[]
   },
-  async containerLogStream(): Promise<LogStreamState> {
-    return (await API.ContainerLogStream()) as unknown as LogStreamState
-  },
-  async setContainerLogStream(on: boolean): Promise<LogStreamState> {
-    return (await API.SetContainerLogStream(on)) as unknown as LogStreamState
+  /** `docker logs`: what one of Symphony's containers has written. */
+  async getContainerLogs(name: string): Promise<LogEvent[]> {
+    const lines = await API.GetContainerLogs(name, 0)
+    return lines.map((l) => ({ level: l.level as LogEvent['level'], source: l.source, message: l.message, ts: l.ts }))
   },
   async listScenarios(): Promise<Scenario[]> {
     return JSON.parse(JSON.stringify(await API.ListScenarios())) as Scenario[]

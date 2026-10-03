@@ -2,8 +2,8 @@ import type { ComponentType } from 'react'
 import { useSymphonyStore, type DrawerTab, type SymphonyState } from '../store/useSymphonyStore'
 import { ContainersView } from './ContainersView'
 import { LogView } from './LogView'
-import { LogsView } from './LogsView'
 import { PlanView } from './PlanView'
+import { RunsView } from './RunsView'
 import { StatsView } from './StatsView'
 import { TestsView } from './TestsView'
 
@@ -11,24 +11,25 @@ const VIEWS: Record<DrawerTab, ComponentType> = {
   plan: PlanView,
   stats: StatsView,
   containers: ContainersView,
-  logs: LogsView,
   log: LogView,
   tests: TestsView,
+  runs: RunsView,
 }
 
 const TABS: { id: DrawerTab; label: string }[] = [
   { id: 'plan', label: 'Plan' },
   { id: 'stats', label: 'Stats' },
   { id: 'containers', label: 'Containers' },
-  { id: 'logs', label: 'Node logs' },
   { id: 'log', label: 'Log' },
   { id: 'tests', label: 'Tests' },
+  { id: 'runs', label: 'Runs' },
 ]
 
 const COUNTS: Partial<Record<DrawerTab, (s: SymphonyState) => number>> = {
   plan: (s) => s.plan?.ops.length ?? 0,
   log: (s) => s.log.length,
   containers: (s) => s.containersRunning,
+  runs: (s) => s.runs.length,
 }
 
 const noCount = () => 0
@@ -46,30 +47,25 @@ function TabBadge({ tab }: { tab: DrawerTab }) {
   )
 }
 
+/** The bottom panel's tabs. Folding it away is the arrow on its top edge and
+ *  its height the edge itself; both live in App, next to the side panels'. */
 export function Drawer() {
-  const open = useSymphonyStore((s) => s.drawerOpen)
   const tab = useSymphonyStore((s) => s.drawerTab)
   const setDrawer = useSymphonyStore((s) => s.setDrawer)
   const View = VIEWS[tab]
 
   return (
-    <div className={`drawer${open ? ' is-open' : ''}`}>
+    <div className="drawer">
       <div className="drawer-bar">
         {TABS.map((t) => (
           <button key={t.id} type="button" className={`tab${tab === t.id ? ' is-active' : ''}`} onClick={() => setDrawer(true, t.id)}>
             {t.label} <TabBadge tab={t.id} />
           </button>
         ))}
-        <div className="toolbar-spacer" />
-        <button type="button" className="btn btn-ghost" onClick={() => setDrawer(!open)}>
-          {open ? 'hide' : 'show'}
-        </button>
       </div>
-      {open ? (
-        <div className="drawer-body">
-          <View />
-        </div>
-      ) : null}
+      <div className="drawer-body">
+        <View />
+      </div>
     </div>
   )
 }

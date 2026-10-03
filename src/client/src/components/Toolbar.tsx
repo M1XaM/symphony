@@ -16,7 +16,6 @@ export function Toolbar() {
   const phase = useSymphonyStore(selectPhase)
   const applied = useSymphonyStore(selectIsApplied)
   const busy = useSymphonyStore(selectBusy)
-  const runtime = useSymphonyStore((s) => s.runtime)
   const dockerUp = useSymphonyStore(selectDockerUp)
   const validation = useSymphonyStore((s) => s.validation)
   const validate = useSymphonyStore((s) => s.validate)
@@ -38,11 +37,6 @@ export function Toolbar() {
         spellCheck={false}
         aria-label="topology name"
       />
-      {runtime ? (
-        <span className={`pill ${runtime.available ? 'pill-running' : 'pill-failed'}`} title={runtime.detail}>
-          {runtime.available ? 'docker' : 'no docker'}
-        </span>
-      ) : null}
       <div className="toolbar-spacer" />
       <button type="button" className="btn" onClick={validate} disabled={busy}>
         Validate

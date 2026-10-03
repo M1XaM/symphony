@@ -14,18 +14,6 @@ export namespace api {
 	        this.cancelled = source["cancelled"];
 	    }
 	}
-	export class LogStreamState {
-	    enabled: boolean;
-	
-	    static createFrom(source: any = {}) {
-	        return new LogStreamState(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.enabled = source["enabled"];
-	    }
-	}
 
 }
 

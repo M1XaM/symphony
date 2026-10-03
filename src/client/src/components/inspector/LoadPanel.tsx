@@ -2,6 +2,10 @@ import { useEffect, useState } from 'react'
 import { fmtNum } from '../../lib/format'
 import { selectIsApplied, useSymphonyStore } from '../../store/useSymphonyStore'
 import type { TopologyNode } from '../../types/topology'
+import { NumberInput } from '../ui/NumberInput'
+import { Select } from '../ui/Select'
+
+const PATTERNS = ['constant', 'ramp', 'burst', 'sine', 'step']
 
 /** Load generator controls, shown on the gateway node. */
 export function LoadPanel({ node }: { node: TopologyNode }) {
@@ -34,17 +38,11 @@ export function LoadPanel({ node }: { node: TopologyNode }) {
       <div className="field">
         <div className="load-row">
           <label className="field-label">rps</label>
-          <input className="input input-num" type="number" min={1} value={rps} onChange={(e) => setRps(Math.max(1, Number(e.target.value) || 1))} />
+          <NumberInput className="input-num" min={1} value={rps} onValue={(n) => setRps(Math.max(1, n || 1))} />
           <label className="field-label">pattern</label>
-          <select className="input" value={pattern} onChange={(e) => setPattern(e.target.value)}>
-            {['constant', 'ramp', 'burst', 'sine', 'step'].map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </select>
+          <Select value={pattern} options={PATTERNS} onChange={setPattern} aria-label="pattern" />
           <label className="field-label">seconds</label>
-          <input className="input input-num" type="number" min={0} value={duration} onChange={(e) => setDuration(Math.max(0, Number(e.target.value) || 0))} />
+          <NumberInput className="input-num" min={0} value={duration} onValue={(n) => setDuration(Math.max(0, n || 0))} />
         </div>
         <div className="load-actions">
           <button

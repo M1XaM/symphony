@@ -59,6 +59,20 @@ func ValidID(id string) bool {
 	return true
 }
 
+// nameRule is what ValidName accepts, as the validation message says it.
+const nameRule = "use English letters, digits, spaces and special characters only"
+
+// ValidName reports whether a topology (template) name is made of printable
+// ASCII only: English letters, digits, spaces and special characters.
+func ValidName(name string) bool {
+	for _, r := range name {
+		if r < ' ' || r > '~' {
+			return false
+		}
+	}
+	return true
+}
+
 // ReplicaNames lists the names of a node's containers within its
 // deployment: the node id, or "<id>-<n>" for each of several replicas.
 func ReplicaNames(n Node) []string {
@@ -85,6 +99,8 @@ func (t Topology) Validate() []ValidationError {
 
 	if t.Name == "" {
 		add("name", "", "", "topology name is required")
+	} else if !ValidName(t.Name) {
+		add("name", "", "", fmt.Sprintf("topology name %q: %s", t.Name, nameRule))
 	}
 	if t.Version < 1 {
 		add("version", "", "", "version must be >= 1")

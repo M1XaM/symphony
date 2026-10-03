@@ -140,11 +140,6 @@ export interface ContainerRow {
   node?: string
 }
 
-/** Whether container output is being mirrored into the app log. */
-export interface LogStreamState {
-  enabled: boolean
-}
-
 /** Whether the Docker daemon answers: the API version when it does, the
  *  reason when it does not. */
 export interface RuntimeStatus {
@@ -167,13 +162,6 @@ export interface ControlResult {
   ok: boolean
   error?: string
   state?: unknown
-}
-
-export interface LogLine {
-  ts: number
-  level: string
-  msg: string
-  attrs?: Record<string, unknown>
 }
 
 export type Phase = 'idle' | 'validating' | 'planning' | 'applying' | 'running' | 'tearing_down' | 'failed'

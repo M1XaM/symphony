@@ -2,6 +2,7 @@ import { fmtNum } from '../../lib/format'
 import { selectDockerUp, selectIsApplied, selectLinks, useSymphonyStore } from '../../store/useSymphonyStore'
 import type { FaultSpec, TopologyEdge } from '../../types/topology'
 import { StatusDot } from '../StatusDot'
+import { NumberInput } from '../ui/NumberInput'
 import { EDGE_FAULTS } from './faults'
 
 export function EdgeInspector({ edge }: { edge: TopologyEdge }) {
@@ -47,26 +48,24 @@ export function EdgeInspector({ edge }: { edge: TopologyEdge }) {
         <label className="field-label">
           timeout_ms <span className="tag tag-cold">requires restart</span>
         </label>
-        <input
-          className="input input-num"
-          type="number"
+        <NumberInput
+          className="input-num"
           min={0}
           placeholder="node default"
           value={edge.timeout_ms ?? ''}
-          onChange={(e) => updateEdge(edge.id, { timeout_ms: Math.max(0, Number(e.target.value) || 0) })}
+          onValue={(n) => updateEdge(edge.id, { timeout_ms: Math.max(0, n || 0) })}
         />
       </div>
       <div className="field">
         <label className="field-label">
           retries <span className="tag tag-cold">requires restart</span>
         </label>
-        <input
-          className="input input-num"
-          type="number"
+        <NumberInput
+          className="input-num"
           min={0}
           placeholder="node default"
           value={edge.retries ?? ''}
-          onChange={(e) => updateEdge(edge.id, { retries: Math.max(0, Number(e.target.value) || 0) })}
+          onValue={(n) => updateEdge(edge.id, { retries: Math.max(0, n || 0) })}
         />
       </div>
 

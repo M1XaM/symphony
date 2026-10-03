@@ -5,6 +5,11 @@
   gap: 8px;
 }
 
+.log-source {
+  min-width: 110px;
+  font-size: 11.5px;
+}
+
 .log-filter {
   width: 140px;
   font-size: 11.5px;

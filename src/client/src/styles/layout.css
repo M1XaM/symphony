@@ -126,6 +126,22 @@
   margin-right: 4px;
 }
 
+/* the bottom panel's handle is the same one lying down, on its top edge */
+.slot-bottom .panel-toggle {
+  top: auto;
+  bottom: 100%;
+  left: 50%;
+  width: 46px;
+  height: 16px;
+  margin-bottom: 4px;
+  transform: translateX(-50%);
+}
+
+.panel-toggle-turned {
+  display: block;
+  transform: rotate(90deg);
+}
+
 /* a folded panel takes no column, so the map (and the zoom controls, which
    read the same variables) get the space back */
 .app.left-folded {
@@ -136,9 +152,42 @@
   --panel-right-w: 0px;
 }
 
-.panel-bottom {
+.slot-bottom {
   grid-column: 1 / -1;
   grid-row: 3;
+}
+
+/* as high as it was dragged, and never more than half the window */
+.panel-bottom {
+  height: var(--drawer-h);
+  max-height: calc(50vh - var(--gap));
+}
+
+/* the strip over the bottom panel's top edge that resizes it */
+.drawer-resize {
+  position: absolute;
+  top: -3px;
+  left: var(--radius-lg);
+  right: var(--radius-lg);
+  z-index: 2;
+  height: 7px;
+  cursor: ns-resize;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.drawer-resize:hover,
+.app.is-resizing .drawer-resize {
+  background: linear-gradient(transparent 2px, var(--accent) 2px, var(--accent) 4px, transparent 4px);
+}
+
+/* nothing gets selected, and the cursor stays, while the edge is dragged */
+.app.is-resizing {
+  cursor: ns-resize;
+}
+
+.app.is-resizing * {
+  user-select: none;
 }
 
 .panel-head {

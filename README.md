@@ -49,14 +49,18 @@ goes away and the deployments it left running are picked up.
 
 The map fills the window and the panels float over it.
 
-- **Toolbar**: the topology's name, whether Docker answers (`docker` or
-  `no docker`), and **Validate**, **Plan**, **Apply**, **Teardown** for the
-  topology on the map, with its phase on the right.
+- **Toolbar**: the topology's name, and **Validate**, **Plan**, **Apply**,
+  **Teardown** for the topology on the map, with its phase on the right.
+  Without Docker a notice across the top says so.
 - **Left panel**: **Elements** to drag onto the map (service, broker,
   database, proxy, gateway) and **Templates**: the two built-in sagas
   (*Orchestration* and *Choreography*) plus the ones you save with **Add
   template**. A dot marks every template the engine is running; several run
-  side by side, each on its own network.
+  side by side, each on its own network. The three dots on a template's card
+  export it as JSON or, for your own, delete it. A name takes English
+  letters, digits, spaces and special characters. While building a template,
+  the **Generate** slider draws a random topology on every move, leaning
+  towards orchestration at one end and choreography at the other.
 - **Map**: drag between handles to connect nodes (the edge kind is inferred),
   Delete removes the selection. Once applied, edges turn green, yellow or red
   with their error rate, and edges carrying traffic animate.
@@ -73,11 +77,12 @@ The map fills the window and the panels float over it.
   | Plan       | validation findings and the operations Apply would run, classed hot / cold / structural |
   | Stats      | host CPU, RAM and network, and the running simulation's container totals and per-node usage |
   | Containers | `watch docker ps`: every container on the machine, the ones Symphony started marked |
-  | Node logs  | the container logs of one node |
-  | Log        | the engine's own events and, with the `docker logs` switch on, every line the containers print; filterable |
-  | Tests      | the scenario catalogue, runs, and side-by-side comparison |
+  | Log        | the engine's own events ("System") or, picked from the list next to the filter, everything one container has printed (`docker logs`); filterable |
+  | Tests      | the scenario catalogue and the scenario being run |
+  | Runs       | the stored runs, the open one's detail, and side-by-side comparison; a run's menu opens it, exports its report or deletes it |
 
-Either side panel folds away with the arrow in the middle of its inner edge.
+Every panel folds away with the arrow in the middle of its inner edge, and the
+drawer's top edge can be dragged to make it up to half the window high.
 
 ### Tests
 
@@ -90,7 +95,8 @@ collects the same series the map shows, evaluates assertions per phase and is
 stored, so runs of one scenario on the two templates can be compared.
 
 A finished run can be exported as a report: the three dots at the end of its
-row offer **Export MD** and **Export PDF**, and a save dialog follows. The
+row in the Runs tab offer **Export MD** and **Export PDF**, and a save dialog
+follows. The
 report holds everything the run recorded: the verdict and the assertions,
 the scenario and its parameters, the template's components and how they
 connect, the numbers per phase, the timeline of what the runner did, and the

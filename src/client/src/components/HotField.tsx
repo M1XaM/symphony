@@ -1,5 +1,7 @@
 import type { ReactElement } from 'react'
 import type { ConfigValue } from '../types/topology'
+import { NumberInput } from './ui/NumberInput'
+import { Select } from './ui/Select'
 
 interface Bounds {
   min: number
@@ -47,28 +49,18 @@ export function ConfigField({ name, value, mode, onChange }: Props) {
             onChange={(e) => onChange(Number(e.target.value))}
           />
         ) : null}
-        <input
-          type="number"
-          className="input input-num"
+        <NumberInput
+          className="input-num"
           step={b.step}
           value={value}
-          onChange={(e) => {
-            const n = Number(e.target.value)
+          onValue={(n) => {
             if (!Number.isNaN(n)) onChange(n)
           }}
         />
       </div>
     )
   } else if (name === 'log_level') {
-    control = (
-      <select className="input" value={value} onChange={(e) => onChange(e.target.value)}>
-        {LOG_LEVELS.map((l) => (
-          <option key={l} value={l}>
-            {l}
-          </option>
-        ))}
-      </select>
-    )
+    control = <Select value={value} options={LOG_LEVELS} onChange={onChange} aria-label={name} />
   } else {
     control = <input className="input" value={value} onChange={(e) => onChange(e.target.value)} spellCheck={false} />
   }

@@ -1,7 +1,7 @@
 import { backend, errorMessage, hasBackend } from '../../lib/backend'
 import { DEFAULT_IMAGE, DEFAULT_RESOURCES, EMPTY_TOPOLOGY, defaultConfig, type ConfigValue, type TopologyEdge, type TopologyNode } from '../../types/topology'
 import { warn } from '../batch'
-import { inferEdge, uniqueId } from '../editing'
+import { asciiName, inferEdge, uniqueId } from '../editing'
 import { selectIsApplied } from '../selectors'
 import type { EditorSlice, Slice } from '../types'
 
@@ -22,7 +22,7 @@ export const createEditorSlice: Slice<EditorSlice> = (set, get) => ({
 
   setName(name) {
     if (selectIsApplied(get())) return
-    set((s) => ({ topology: { ...s.topology, name } }))
+    set((s) => ({ topology: { ...s.topology, name: asciiName(name) } }))
   },
 
   addNode(kind, position) {

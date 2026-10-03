@@ -21,6 +21,12 @@ export function inferEdge(t: Topology, from: TopologyNode, to: TopologyNode): Pi
   return { kind: 'calls' }
 }
 
+/** A topology name as the engine accepts it: English letters, digits, spaces
+ *  and special characters (printable ASCII); everything else is dropped. */
+export function asciiName(name: string): string {
+  return name.replace(/[^\x20-\x7e]/g, '')
+}
+
 /** `base`, or `base-2`, `base-3`, ... : the first that is not taken. */
 export function uniqueId(base: string, taken: (id: string) => boolean): string {
   if (!taken(base)) return base

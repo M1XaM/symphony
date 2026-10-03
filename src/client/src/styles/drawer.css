@@ -3,11 +3,9 @@
 .drawer {
   display: flex;
   flex-direction: column;
+  height: 100%;
+  min-height: 0;
   background: transparent;
-}
-
-.drawer.is-open {
-  height: var(--drawer-h);
 }
 
 .drawer-bar {

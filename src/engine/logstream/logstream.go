@@ -1,8 +1,9 @@
-// Package logstream mirrors container output into the event bus. The blocks
-// write JSON lines to stdout, which Docker keeps and `docker logs -f` prints;
-// the Streamer follows every container the engine owns and republishes each
-// line as an engine log, so the app's Log tab holds the container logs too and
-// nobody has to keep a terminal open next to the window.
+// Package logstream reads container output. The blocks write JSON lines to
+// stdout, which Docker keeps and `docker logs -f` prints; the Streamer follows
+// every container the engine owns and republishes each line as an engine log
+// (what `symphony-cli log` prints), and Entry turns one stored line into
+// the same shape for the window's Log tab, which reads a container's log on
+// demand.
 package logstream
 
 import (
@@ -271,6 +272,23 @@ func parse(line string, stderr bool) (level, msg string) {
 		fmt.Fprintf(&b, " %s=%v", k, rec[k])
 	}
 	return level, b.String()
+}
+
+// Entry is one line of a container's log as the Log tab shows it. The time is
+// the one the block stamped on the record; a line that carries none (a panic,
+// a runtime message) has Ts 0.
+func Entry(container, line string) events.LogPayload {
+	level, msg := parse(line, false)
+	out := events.LogPayload{Level: level, Source: container, Message: msg}
+	if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "{") {
+		var rec struct {
+			Time time.Time `json:"time"`
+		}
+		if json.Unmarshal([]byte(trimmed), &rec) == nil && !rec.Time.IsZero() {
+			out.Ts = rec.Time.UnixMilli()
+		}
+	}
+	return out
 }
 
 // limiter is a token bucket, one per container.
