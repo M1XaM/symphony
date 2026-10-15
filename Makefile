@@ -108,15 +108,15 @@ $(CLIENT)/dist:
 test: image $(CLIENT)/dist
 	$(DOCKER_RUN) $(IMAGE) bash -c '\
 	  go test ./... && \
-	  cd client && { [ -x node_modules/.bin/vitest ] || npm ci; } && npm test'
+	  bash build/docker/client-deps.sh && cd client && npm test'
 
 # What `make check` does natively, in the container, plus gofmt. The client's
-# node_modules volume is filled on first use.
+# node_modules volume is (re)filled by client-deps.sh when the lockfile changes.
 lint: image $(CLIENT)/dist
 	$(DOCKER_RUN) $(IMAGE) bash -c '\
 	  fmt=$$(gofmt -l blocks engine cmd *.go) && [ -z "$$fmt" ] || { echo "gofmt needed:"; echo "$$fmt"; exit 1; }; \
 	  go vet ./... && go vet -tags cli . && \
-	  cd client && { [ -d node_modules/.bin ] || npm ci; } && npm run typecheck'
+	  bash build/docker/client-deps.sh && cd client && npm run typecheck'
 	@$(GUIDE) | cmp -s - docs/CLI.md || \
 	  { echo "docs/CLI.md is not what symphony-cli generate-guide writes: run make docs"; exit 1; }
 

@@ -20,11 +20,9 @@ esac
 
 # node_modules is a named volume so the host copy (possibly built for another
 # OS) is never touched. Wails skips `npm install` when package.json.md5 matches
-# and node_modules exists, which is true for a fresh empty volume, so drop the
-# checksum until the volume has actually been populated.
-if [ ! -d client/node_modules/.bin ]; then
-  rm -f client/package.json.md5
-fi
+# and node_modules exists, so install from the lockfile here whenever the
+# volume is empty or was filled from an older one.
+bash build/docker/client-deps.sh
 
 if [ "${ONLY:-}" != cli ]; then
   echo "==> wails build -platform $PLATFORM ${tags[*]:-}"
